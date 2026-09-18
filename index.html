@@ -9,7 +9,7 @@
   <meta name="referrer" content="no-referrer-when-downgrade" />
   <title>杭州桐庐 3天2夜</title>
   <link rel="stylesheet" href="theme.css?v=2" />
-  <link rel="stylesheet" href="style.css?v=9" />
+  <link rel="stylesheet" href="style.css?v=10" />
 </head>
 <body>
 
@@ -340,6 +340,24 @@
             <button type="button" class="calc-done" id="calc-done">用这个金额</button>
           </div>
         </div>
+        <!-- 币种：只有非人民币的行程（海外 / 港澳台）才出现，显隐由 renderFxUI() 控制。
+             入账金额永远是人民币（expense.amount），这一行只是「这笔钱当时怎么花的」的记录方式。 -->
+        <div class="field-row" id="fx-row" hidden>
+          <label>币种 <span class="lbl-hint">记外币，自动折成人民币入账</span></label>
+          <div class="fx-line">
+            <select id="e-currency"></select>
+            <div class="fx-rate" id="fx-rate-line" hidden>
+              <span class="fx-lbl">1 <b id="fx-code">THB</b> ≈</span>
+              <input id="e-fx-rate" type="text" inputmode="decimal" placeholder="汇率" />
+              <span class="fx-unit">元</span>
+              <button type="button" class="fx-refresh" id="btn-fx-refresh" title="取实时汇率">↻</button>
+            </div>
+          </div>
+          <div class="fx-foot">
+            <div class="fx-conv" id="fx-conv"></div>
+            <div class="fx-src" id="fx-src"></div>
+          </div>
+        </div>
         <div class="field-row"><label>日期</label><input id="e-date" type="date" /></div>
         <div class="field-row">
           <label>垫付人 <span class="lbl-hint">这笔钱谁先掏的</span></label>
@@ -397,8 +415,8 @@
 
   <!-- 静态版：没有 Node 后端，socket.io 由 static-bridge.js 提供的本地替身接管。
        顺序要紧：site-config.js（站点配置）→ static-bridge.js（先定义 io/fetch 替身）→ app.js -->
-  <script src="site-config.js?v=3"></script>
-  <script src="static-bridge.js?v=7"></script>
-  <script src="app.js?v=12"></script>
+  <script src="site-config.js?v=4"></script>
+  <script src="static-bridge.js?v=8"></script>
+  <script src="app.js?v=13"></script>
 </body>
 </html>
