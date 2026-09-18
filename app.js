@@ -20,6 +20,118 @@ const UP_SVG = '<svg width="15" height="15" viewBox="0 0 16 16"><path d="M8 12.5
 const DOWN_SVG = '<svg width="15" height="15" viewBox="0 0 16 16"><path d="M8 3.5 V12 M8 12 L4.6 8.6 M8 12 L11.4 8.6" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></svg>';
 const EXP_CATS = ['交通', '住宿', '餐饮', '门票', '其他'];
 
+// ===== 币种：海外行程记费用要选币种（2026-09-18）=====
+// 🔴 结算永远只用人民币：expense.amount 就是人民币金额，全站的汇总/人均/结算都只认它。
+//    外币只是「这笔钱当时是怎么记的」的凭据（currency + originalAmount + rate），
+//    显示在条目上供核对。老数据没有 currency 字段 = 人民币，零迁移。
+const CURRENCIES = [
+  { code: 'CNY', name: '人民币' },
+  { code: 'THB', name: '泰铢' },
+  { code: 'JPY', name: '日元' },
+  { code: 'KRW', name: '韩元' },
+  { code: 'USD', name: '美元' },
+  { code: 'EUR', name: '欧元' },
+  { code: 'GBP', name: '英镑' },
+  { code: 'AUD', name: '澳元' },
+  { code: 'NZD', name: '新西兰元' },
+  { code: 'CAD', name: '加拿大元' },
+  { code: 'CHF', name: '瑞士法郎' },
+  { code: 'HKD', name: '港币' },
+  { code: 'MOP', name: '澳门元' },
+  { code: 'TWD', name: '新台币' },
+  { code: 'SGD', name: '新加坡元' },
+  { code: 'MYR', name: '马来西亚林吉特' },
+  { code: 'IDR', name: '印尼盾' },
+  { code: 'VND', name: '越南盾' },
+  { code: 'PHP', name: '菲律宾比索' },
+  { code: 'KHR', name: '柬埔寨瑞尔' },
+  { code: 'LAK', name: '老挝基普' },
+  { code: 'MMK', name: '缅甸元' },
+  { code: 'BND', name: '文莱元' },
+  { code: 'INR', name: '印度卢比' },
+  { code: 'LKR', name: '斯里兰卡卢比' },
+  { code: 'NPR', name: '尼泊尔卢比' },
+  { code: 'MVR', name: '马尔代夫拉菲亚' },
+  { code: 'AED', name: '阿联酋迪拉姆' },
+  { code: 'QAR', name: '卡塔尔里亚尔' },
+  { code: 'SAR', name: '沙特里亚尔' },
+  { code: 'ILS', name: '以色列新谢克尔' },
+  { code: 'TRY', name: '土耳其里拉' },
+  { code: 'JOD', name: '约旦第纳尔' },
+  { code: 'EGP', name: '埃及镑' },
+  { code: 'MAD', name: '摩洛哥迪拉姆' },
+  { code: 'ZAR', name: '南非兰特' },
+  { code: 'KES', name: '肯尼亚先令' },
+  { code: 'TZS', name: '坦桑尼亚先令' },
+  { code: 'MUR', name: '毛里求斯卢比' },
+  { code: 'SCR', name: '塞舌尔卢比' },
+  { code: 'TND', name: '突尼斯第纳尔' },
+  { code: 'RUB', name: '俄罗斯卢布' },
+  { code: 'CZK', name: '捷克克朗' },
+  { code: 'HUF', name: '匈牙利福林' },
+  { code: 'PLN', name: '波兰兹罗提' },
+  { code: 'SEK', name: '瑞典克朗' },
+  { code: 'NOK', name: '挪威克朗' },
+  { code: 'DKK', name: '丹麦克朗' },
+  { code: 'ISK', name: '冰岛克朗' },
+  { code: 'MXN', name: '墨西哥比索' },
+  { code: 'BRL', name: '巴西雷亚尔' },
+  { code: 'ARS', name: '阿根廷比索' },
+  { code: 'CLP', name: '智利比索' },
+  { code: 'PEN', name: '秘鲁索尔' },
+  { code: 'FJD', name: '斐济元' },
+  { code: 'MNT', name: '蒙古图格里克' }
+];
+const CURRENCY_NAMES = {};
+CURRENCIES.forEach(c => { CURRENCY_NAMES[c.code] = c.name; });
+
+// 目的地 → 币种：只用来给币种下拉定一个初值。
+// 站点配置里的 currency 优先（生成行程时按目的地算好），这张表只是兜底；
+// 而用户在这台设备上「上次选过的币种」优先级最高 —— 那才是他真实在花的钱。
+// 猜错的代价很低：下拉一改就好，改完会被记住。
+const CITY_CURRENCY = {
+  '曼谷': 'THB', '清迈': 'THB', '普吉': 'THB', '芭提雅': 'THB', '苏梅': 'THB', '甲米': 'THB', '泰国': 'THB',
+  '东京': 'JPY', '大阪': 'JPY', '京都': 'JPY', '奈良': 'JPY', '北海道': 'JPY', '札幌': 'JPY',
+  '冲绳': 'JPY', '福冈': 'JPY', '名古屋': 'JPY', '日本': 'JPY',
+  '首尔': 'KRW', '釜山': 'KRW', '济州': 'KRW', '韩国': 'KRW',
+  '新加坡': 'SGD',
+  '吉隆坡': 'MYR', '槟城': 'MYR', '沙巴': 'MYR', '兰卡威': 'MYR', '马来西亚': 'MYR',
+  '巴厘岛': 'IDR', '雅加达': 'IDR', '印尼': 'IDR',
+  '河内': 'VND', '胡志明': 'VND', '岘港': 'VND', '芽庄': 'VND', '越南': 'VND',
+  '马尼拉': 'PHP', '长滩岛': 'PHP', '宿务': 'PHP', '菲律宾': 'PHP',
+  '金边': 'KHR', '暹粒': 'KHR', '柬埔寨': 'KHR',
+  '万象': 'LAK', '琅勃拉邦': 'LAK', '老挝': 'LAK',
+  '仰光': 'MMK', '缅甸': 'MMK', '文莱': 'BND',
+  '新德里': 'INR', '孟买': 'INR', '印度': 'INR',
+  '科伦坡': 'LKR', '斯里兰卡': 'LKR', '加德满都': 'NPR', '尼泊尔': 'NPR',
+  '马累': 'MVR', '马尔代夫': 'MVR',
+  '迪拜': 'AED', '阿布扎比': 'AED', '阿联酋': 'AED',
+  '多哈': 'QAR', '卡塔尔': 'QAR', '沙特': 'SAR',
+  '伊斯坦布尔': 'TRY', '卡帕多奇亚': 'TRY', '土耳其': 'TRY',
+  '特拉维夫': 'ILS', '以色列': 'ILS', '约旦': 'JOD',
+  '开罗': 'EGP', '埃及': 'EGP', '摩洛哥': 'MAD', '卡萨布兰卡': 'MAD',
+  '开普敦': 'ZAR', '约翰内斯堡': 'ZAR', '南非': 'ZAR',
+  '伦敦': 'GBP', '爱丁堡': 'GBP', '英国': 'GBP',
+  '巴黎': 'EUR', '罗马': 'EUR', '米兰': 'EUR', '威尼斯': 'EUR', '巴塞罗那': 'EUR', '马德里': 'EUR',
+  '柏林': 'EUR', '慕尼黑': 'EUR', '阿姆斯特丹': 'EUR', '里斯本': 'EUR', '雅典': 'EUR',
+  '维也纳': 'EUR', '赫尔辛基': 'EUR', '都柏林': 'EUR', '欧洲': 'EUR',
+  '布拉格': 'CZK', '布达佩斯': 'HUF', '华沙': 'PLN',
+  '苏黎世': 'CHF', '日内瓦': 'CHF', '瑞士': 'CHF',
+  '斯德哥尔摩': 'SEK', '奥斯陆': 'NOK', '哥本哈根': 'DKK', '冰岛': 'ISK', '雷克雅未克': 'ISK',
+  '莫斯科': 'RUB', '圣彼得堡': 'RUB', '俄罗斯': 'RUB',
+  '纽约': 'USD', '洛杉矶': 'USD', '旧金山': 'USD', '拉斯维加斯': 'USD', '夏威夷': 'USD',
+  '西雅图': 'USD', '芝加哥': 'USD', '波士顿': 'USD', '华盛顿': 'USD', '迈阿密': 'USD',
+  '关岛': 'USD', '塞班': 'USD', '帕劳': 'USD', '美国': 'USD',
+  '温哥华': 'CAD', '多伦多': 'CAD', '蒙特利尔': 'CAD', '加拿大': 'CAD',
+  '墨西哥城': 'MXN', '坎昆': 'MXN', '墨西哥': 'MXN',
+  '圣保罗': 'BRL', '里约': 'BRL', '巴西': 'BRL', '秘鲁': 'PEN', '智利': 'CLP', '阿根廷': 'ARS',
+  '悉尼': 'AUD', '墨尔本': 'AUD', '布里斯班': 'AUD', '珀斯': 'AUD', '黄金海岸': 'AUD', '澳洲': 'AUD',
+  '奥克兰': 'NZD', '皇后镇': 'NZD', '新西兰': 'NZD', '斐济': 'FJD',
+  '乌兰巴托': 'MNT', '蒙古': 'MNT',
+  // 港澳台用高德地图，但币种不是人民币，一样要能选
+  '香港': 'HKD', '澳门': 'MOP', '台北': 'TWD', '高雄': 'TWD', '台中': 'TWD', '台湾': 'TWD'
+};
+
 // ===== 行程类型 =====
 // 只有「交通」需要准确时间（赶车赶飞机），游玩/餐饮按当天节奏走，时间意义不大。
 // 「其他」是兜底类型：要不要填时间由用户在弹窗里自己勾，结果存在 item.timeOn。
@@ -84,6 +196,8 @@ const PLACE_COORDS = {};
 let tripConfig = {
   mapProvider: 'amap',
   cityName: '',            // 高德/点评/谷歌搜索的城市限定词
+  cityAliases: [],         // 目的地的别名（中文名 / 拼音 / 英文名），用来猜记账币种
+  currency: '',            // 这趟的记账币种（生成行程时按目的地算好；空 = 页面自己猜）
   searchCenter: [0, 0],    // 搜索中心 [lng, lat]（无坐标时的兜底）
   amapConfigured: false,
   googlePlacesConfigured: false
@@ -94,6 +208,8 @@ async function fetchTripConfig() {
     const d = await r.json();
     if (d.mapProvider === 'google' || d.mapProvider === 'amap') tripConfig.mapProvider = d.mapProvider;
     tripConfig.cityName = d.cityName || '';
+    tripConfig.cityAliases = Array.isArray(d.cityAliases) ? d.cityAliases : [];
+    tripConfig.currency = d.currency || '';
     if (Array.isArray(d.searchCenter) && d.searchCenter.length === 2) {
       tripConfig.searchCenter = [Number(d.searchCenter[0]) || 0, Number(d.searchCenter[1]) || 0];
     }
@@ -108,6 +224,12 @@ async function fetchTripConfig() {
 function uid(p) { return p + '-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 6); }
 function escapeHtml(s) {
   return String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+// 外币金额带千分位更好读（泰铢动辄五六位数）：整数不拖小数，有零头才留两位
+function fmtMoney(n) {
+  const v = Number(n) || 0;
+  const s = Math.abs(v % 1) < 1e-9 ? String(Math.round(v)) : v.toFixed(2);
+  return s.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
 }
 function formatDate(dateStr) {
   if (!dateStr) return '';
@@ -662,6 +784,14 @@ function expItemHTML(e, idx) {
   // 单人行程没有「分摊」这回事，就别在每一条上重复写它
   const sub = solo ? who : `${who} · ${parts.length} 人分摊`;
   const right = solo ? '' : `<div class="p">人均 ¥${per.toFixed(2)}</div>`;
+  // 外币记的那一笔：主数字仍是人民币（结算认它），下面小字还原当时花的原币，
+  // 鼠标停上去能看到当时的汇率 —— 不然「我明明花了 5000 泰铢，怎么记成 1023」说不清。
+  const cur = (e.currency && e.currency !== 'CNY') ? String(e.currency) : '';
+  const orig = cur ? (Number(e.originalAmount) || 0) : 0;
+  const rate = Number(e.rate) || 0;
+  const origHTML = (cur && orig > 0)
+    ? `<div class="o" title="${rate > 0 ? `1 ${cur} = ¥${trimRate(rate)}` : ''}">${escapeHtml(cur)} ${fmtMoney(orig)}</div>`
+    : '';
   return `<div class="exp-item" data-act="edit-exp" data-idx="${idx}">
     <span class="exp-cat exp-cat-${escapeHtml(cat)}">${escapeHtml(cat)}</span>
     <div class="exp-main">
@@ -670,6 +800,7 @@ function expItemHTML(e, idx) {
     </div>
     <div class="exp-amt">
       <div class="a">¥${amt.toFixed(2)}</div>
+      ${origHTML}
       ${right}
     </div>
   </div>`;
@@ -1905,6 +2036,259 @@ function closeItemModal() {
   editingItem = { day: -1, idx: -1 };
 }
 
+// ===== 币种与汇率（海外行程记外币用）=====
+// 这一行要不要出现，不看「是不是海外」，而看「这趟花的钱是不是人民币」——
+// 港澳台走的是高德地图（mapProvider=amap），但花的也不是人民币，一样得能选币种。
+
+function isOverseas() { return tripConfig.mapProvider === 'google'; }
+
+// 按目的地名字猜币种：先精确匹配，再退到包含匹配（「曼谷+清迈」「Bangkok, Thailand」）
+function guessCurrency() {
+  const names = [];
+  for (let i = 0; i < arguments.length; i++) {
+    const v = arguments[i];
+    if (Array.isArray(v)) v.forEach(x => { if (x) names.push(String(x)); });
+    else if (v) names.push(String(v));
+  }
+  const keys = Object.keys(CITY_CURRENCY);
+  for (const n of names) {
+    const hit = CITY_CURRENCY[n.trim()];
+    if (hit) return hit;
+  }
+  for (const n of names) {
+    const t = n.trim();
+    if (!t) continue;
+    const k = keys.find(key => t.includes(key));
+    if (k) return CITY_CURRENCY[k];
+  }
+  return '';
+}
+
+// 这趟行程的记账币种。优先级：这台设备上次记过的 > 站点配置写明的 > 按目的地猜 > 海外兜底美元。
+function tripDefaultCurrency() {
+  const last = lastCurrency();
+  if (last) return last;
+  const cfg = String(tripConfig.currency || '').toUpperCase();
+  if (CURRENCY_NAMES[cfg]) return cfg;
+  const guess = guessCurrency(tripConfig.cityName, tripConfig.cityAliases);
+  if (guess) return guess;
+  return isOverseas() ? 'USD' : 'CNY';
+}
+
+function needsCurrency() { return tripDefaultCurrency() !== 'CNY'; }
+function currencyName(code) { return CURRENCY_NAMES[code] || code; }
+
+// 汇率缓存与「上次选的币种」都按行程隔离：同一账号下的 Pages 站是同源的，
+// 不隔离的话曼谷记的泰铢会跟着跑到桐庐去。
+function fxNamespace() {
+  return (window.__tripBridge && window.__tripBridge.siteId) || (location.host + location.pathname);
+}
+function fxKey(suffix) { return 'trip_fx_' + fxNamespace() + '_' + suffix; }
+
+function lastCurrency() {
+  try {
+    const c = localStorage.getItem(fxKey('last'));
+    return (c && CURRENCY_NAMES[c]) ? c : '';
+  } catch (e) { return ''; }
+}
+function rememberCurrency(code) {
+  try { localStorage.setItem(fxKey('last'), code); } catch (e) { /* 无痕模式等，记住与否不影响记账 */ }
+}
+
+// 汇率缓存有效期半天：日内波动小，没必要每次开弹窗都打一次网络。
+// 过期了也只是「先用旧值显示、后台再刷一次」，不会让用户对着空白框发呆。
+const FX_TTL = 12 * 3600 * 1000;
+const FX_TIMEOUT = 8000;
+
+// 两个免费源（都无需 Key、返回的都是「1 人民币 = X 外币」），前一个失败自动换下一个。
+// 第一个走 jsDelivr CDN，国内可直连；第二个是 exchangerate-api 的免费端点。
+const FX_URLS = [
+  'https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@latest/v1/currencies/cny.min.json',
+  'https://open.er-api.com/v6/latest/CNY'
+];
+
+function fetchWithTimeout(url, init, ms) {
+  if (typeof AbortController !== 'function') return fetch(url, init);
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), ms);
+  return fetch(url, Object.assign({}, init, { signal: ctl.signal })).then(
+    r => { clearTimeout(timer); return r; },
+    e => { clearTimeout(timer); throw e; }
+  );
+}
+
+// 接口给的是「1 人民币 = X 外币」，我们要的是「1 外币 = ? 人民币」（取倒数）。
+function fxPerCny(d, code) {
+  if (!d) return 0;
+  const lo = code.toLowerCase(), up = code.toUpperCase();
+  if (d.cny && typeof d.cny[lo] === 'number') return d.cny[lo];
+  if (d.rates && typeof d.rates[up] === 'number') return d.rates[up];
+  return 0;
+}
+function fxDateOf(d) {
+  if (d && typeof d.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(d.date)) return d.date;
+  if (d && d.time_last_update_unix) {
+    const t = new Date(d.time_last_update_unix * 1000), p = n => (n < 10 ? '0' : '') + n;
+    return t.getFullYear() + '-' + p(t.getMonth() + 1) + '-' + p(t.getDate());
+  }
+  return '';
+}
+
+// 取实时汇率。逐个源试，全挂了返回 null（调用方会退到缓存或让用户手填）。
+async function fetchLiveRate(code) {
+  for (const url of FX_URLS) {
+    try {
+      const r = await fetchWithTimeout(url, { cache: 'no-store' }, FX_TIMEOUT);
+      if (!r.ok) continue;
+      const d = await r.json();
+      const per = fxPerCny(d, code);
+      if (per > 0) return { rate: 1 / per, date: fxDateOf(d) };
+    } catch (e) { /* 这个源不通，换下一个 */ }
+  }
+  return null;
+}
+
+function readFxCache(code) {
+  try {
+    const o = JSON.parse(localStorage.getItem(fxKey('rate_' + code)) || 'null');
+    if (o && Number(o.rate) > 0) return { rate: Number(o.rate), date: o.date || '', at: Number(o.at) || 0 };
+  } catch (e) { /* 坏缓存当没有 */ }
+  return null;
+}
+function writeFxCache(code, rate, date) {
+  try { localStorage.setItem(fxKey('rate_' + code), JSON.stringify({ rate, date, at: Date.now() })); } catch (e) {}
+}
+
+// 汇率显示成 6 位有效数字：0.204579 / 0.00028 / 152.3 都能看清楚，又不会被一长串小数糊住
+function trimRate(r) {
+  if (!(r > 0)) return '';
+  return String(Number(r.toPrecision(6)));
+}
+
+// 弹窗里正在用的币种与汇率。rate 的含义固定是「1 单位外币等于多少人民币」。
+// locked = 这个数是「这笔记录当时记下的汇率」，别自动拿新价覆盖（否则一保存金额就变了）。
+let fx = { code: 'CNY', rate: 0, date: '', source: '', loading: false, locked: false };
+
+function fxApplyCode(code) {
+  fx.code = CURRENCY_NAMES[code] ? code : 'CNY';
+  fx.loading = false;
+  fx.locked = false;
+  fx.rate = 0; fx.date = ''; fx.source = '';
+  if (fx.code === 'CNY') return;
+  const hit = readFxCache(fx.code);
+  if (hit) { fx.rate = hit.rate; fx.date = hit.date; fx.source = 'cache'; }
+}
+
+async function refreshRate(manual) {
+  if (!needsCurrency() || fx.code === 'CNY') return;
+  const want = fx.code;
+  fx.loading = true;
+  renderFxUI();
+  const got = await fetchLiveRate(want);
+  if (fx.code !== want) return;              // 等待期间用户换了币种，这次的结果作废
+  fx.loading = false;
+  if (got) {
+    fx.rate = got.rate; fx.date = got.date; fx.source = 'live'; fx.locked = false;
+    writeFxCache(want, got.rate, got.date);
+  } else if (manual) {
+    toast('没取到实时汇率，检查一下网络，或者手动填汇率');
+  }
+  renderFxUI();
+}
+
+// 打开弹窗时：缓存还新鲜就不打网络，直接用它；过期或没有才去取
+function maybeRefreshRate() {
+  if (!needsCurrency() || fx.code === 'CNY') return;
+  if (fx.locked) return;
+  const hit = readFxCache(fx.code);
+  if (hit && Date.now() - hit.at < FX_TTL) return;
+  refreshRate(false);
+}
+
+function fxAmountValue() { return evalExpr($('#e-amount').value); }
+
+// 只刷新「换算结果」那一行，不碰输入框（用户可能正在里面打字）
+function updateFxHint() {
+  const box = $('#fx-conv');
+  if (!box) return;
+  const on = needsCurrency() && fx.code !== 'CNY';
+  box.hidden = !on;
+  if (!on) return;
+  box.className = 'fx-conv';
+  if (!(fx.rate > 0)) {
+    box.textContent = fx.loading ? '正在取实时汇率…' : '填一下汇率，或点 ↻ 重新取';
+    box.classList.add(fx.loading ? 'wait' : 'err');
+    return;
+  }
+  const v = fxAmountValue();
+  box.textContent = (isFinite(v) && v > 0)
+    ? `≈ ¥${(v * fx.rate).toFixed(2)}`
+    : `按 1 ${fx.code} = ¥${trimRate(fx.rate)} 折算`;
+}
+
+function renderFxUI() {
+  const row = $('#fx-row');
+  if (!row) return;
+  const on = needsCurrency();
+  row.hidden = !on;
+  if (!on) return;
+  const isCny = fx.code === 'CNY';
+  const rateLine = $('#fx-rate-line');
+  if (rateLine) rateLine.hidden = isCny;
+  const codeEl = $('#fx-code');
+  if (codeEl) codeEl.textContent = fx.code;
+  const rateInput = $('#e-fx-rate');
+  // 用户正在改这个框时不要覆盖（手机上光标会跳回开头）
+  if (rateInput && document.activeElement !== rateInput) {
+    rateInput.value = fx.rate > 0 ? trimRate(fx.rate) : '';
+  }
+  const src = $('#fx-src');
+  if (src) {
+    if (fx.loading) src.textContent = '取实时汇率中…';
+    else if (!fx.rate) src.textContent = '暂无汇率';
+    else if (fx.source === 'live') src.textContent = '实时汇率' + (fx.date ? ' · ' + fx.date : '');
+    else if (fx.source === 'cache') src.textContent = '本机缓存' + (fx.date ? ' · ' + fx.date : '');
+    else if (fx.source === 'record') src.textContent = '记账时的汇率' + (fx.date ? ' · ' + fx.date : '');
+    else src.textContent = '手动填写';
+  }
+  const btn = $('#btn-fx-refresh');
+  if (btn) { btn.disabled = fx.loading; btn.classList.toggle('loading', fx.loading); }
+  updateFxHint();
+}
+
+function initCurrencySelect() {
+  const sel = $('#e-currency');
+  if (!sel) return;
+  sel.innerHTML = CURRENCIES.map(c =>
+    `<option value="${c.code}">${c.code} · ${escapeHtml(c.name)}</option>`).join('');
+}
+
+function bindFxEvents() {
+  const sel = $('#e-currency');
+  if (sel) {
+    sel.addEventListener('change', () => {
+      fxApplyCode(sel.value);
+      renderFxUI();
+      maybeRefreshRate();
+    });
+  }
+  const input = $('#e-fx-rate');
+  if (input) {
+    input.addEventListener('input', () => {
+      const raw = String(input.value).trim().replace(/,/g, '');
+      const v = Number(raw);
+      fx.rate = (raw && isFinite(v) && v > 0) ? v : 0;
+      fx.source = fx.rate > 0 ? 'manual' : '';
+      if (fx.rate > 0) fx.locked = true;   // 自己填的，别被自动刷新盖掉
+      const src = $('#fx-src');
+      if (src) src.textContent = fx.rate > 0 ? '手动填写' : '暂无汇率';
+      updateFxHint();
+    });
+  }
+  const btn = $('#btn-fx-refresh');
+  if (btn) btn.addEventListener('click', () => refreshRate(true));
+}
+
 // ===== 费用弹窗 =====
 let editingExp = null; // null=关闭, -1=新增, >=0=编辑
 
@@ -1951,8 +2335,27 @@ function openExpModal(idx) {
   const members = tripMembers();
   fillExpSelects(e ? e.payer : null);
   $('#exp-modal-title').textContent = e ? '编辑费用' : '记一笔';
+
+  // 币种：海外（或港澳台这类非人民币目的地）才出现这一行。
+  // 编辑旧记录时把「记账当时的汇率」摆回去 —— 换成今天的汇率，一保存金额就变了。
+  initCurrencySelect();
+  fxApplyCode(e && e.currency ? e.currency : tripDefaultCurrency());
+  if (e && e.currency && e.currency !== 'CNY') {
+    fx.rate = Number(e.rate) || 0;
+    fx.date = e.rateAt || '';
+    fx.source = 'record';
+    fx.locked = true;
+  }
+  const curSel = $('#e-currency');
+  if (curSel) curSel.value = fx.code;
+  renderFxUI();
+  maybeRefreshRate();
+
+  // 外币记录的金额框回填的必须是当时输入的原币数额：填人民币的话，
+  // 一打开就被换成人民币、一保存又被乘一次汇率，钱越记越离谱。
+  const editingForeign = !!(e && e.currency && e.currency !== 'CNY');
   $('#e-title').value = e ? (e.title || '') : '';
-  $('#e-amount').value = e ? (e.amount ?? '') : '';
+  $('#e-amount').value = e ? (editingForeign ? (e.originalAmount ?? '') : (e.amount ?? '')) : '';
   updateAmountHint();
   $('#e-category').value = e ? (e.category || '交通') : '交通';
   $('#e-date').value = e ? (e.date || '') : '';
@@ -2015,6 +2418,7 @@ function evalExpr(input) {
 
 // 输入时实时显示计算结果
 function updateAmountHint() {
+  updateFxHint();          // 金额一变，外币那行的折算结果也要跟着变
   const el = $('#e-amount-calc');
   if (!el) return;
   const raw = $('#e-amount').value;
@@ -2116,9 +2520,25 @@ function saveExp() {
   const selected = [...document.querySelectorAll('#e-participants label.on')].map(l => l.dataset.m);
   const evaluated = evalExpr($('#e-amount').value);
   if (!isFinite(evaluated)) { toast('金额算式无法计算，请检查'); return; }
-  const amt = Math.round(evaluated * 100) / 100;
-  if (!amt) { toast('请填写金额'); return; }
-  if (amt < 0) { toast('金额不能为负数'); return; }
+  const input = Math.round(evaluated * 100) / 100;   // 金额框里填的那个数（选了外币就是外币）
+  if (!input) { toast('请填写金额'); return; }
+  if (input < 0) { toast('金额不能为负数'); return; }
+
+  // 海外行程可以按外币记：金额框里填的是原币，入账前折成人民币。
+  // amount 永远存人民币 —— 汇总、人均、结算全按它算，不用管是哪国货币。
+  const cur = (needsCurrency() && $('#e-currency') && $('#e-currency').value)
+    ? $('#e-currency').value : 'CNY';
+  const foreign = {};
+  let amt = input;
+  if (cur !== 'CNY') {
+    if (!(fx.rate > 0)) { toast('还没拿到 1 ' + cur + ' 的汇率，点 ↻ 重试或手动填一下'); return; }
+    amt = Math.round(input * fx.rate * 100) / 100;
+    foreign.currency = cur;             // 原币种
+    foreign.originalAmount = input;     // 原币金额（金额框里那个数）
+    foreign.rate = fx.rate;             // 1 单位原币 = ? 元
+    foreign.rateAt = fx.date || '';     // 汇率是哪一天的（接口给的）
+    foreign.rateSource = fx.source || 'manual';
+  }
   // 单人行程不存在分摊：钱就是他花的，名单里也只有他一个
   const solo = members.length <= 1;
   const data = {
@@ -2128,14 +2548,21 @@ function saveExp() {
     date: $('#e-date').value,
     payer: solo ? (members[0] || '') : ($('#e-payer').value || members[0] || ''),
     participants: solo ? members.slice() : (selected.length ? selected : members),
-    note: $('#e-note').value.trim()
+    note: $('#e-note').value.trim(),
+    ...foreign
   };
   if (editingExp === -1) {
     data.id = uid('e');
     state.expenses.push(data);
   } else if (editingExp >= 0) {
-    state.expenses[editingExp] = Object.assign({}, state.expenses[editingExp], data);
+    const merged = Object.assign({}, state.expenses[editingExp], data);
+    // 从外币改回人民币：把外币凭据清干净，别留一个对不上的汇率在那
+    if (cur === 'CNY') {
+      ['currency', 'originalAmount', 'rate', 'rateAt', 'rateSource'].forEach(k => { delete merged[k]; });
+    }
+    state.expenses[editingExp] = merged;
   }
+  if (cur !== 'CNY') rememberCurrency(cur);
   commit();
   closeExpModal();
 }
@@ -2236,6 +2663,7 @@ function bindEvents() {
   $('#btn-save-meta').addEventListener('click', saveMeta);
   $('#meta-close').addEventListener('click', closeMetaModal);
   bindMemberEditor();
+  bindFxEvents();
   $('#btn-save-day').addEventListener('click', saveDay);
   $('#day-close').addEventListener('click', closeDayModal);
   $('#btn-del-day').addEventListener('click', deleteDay);
