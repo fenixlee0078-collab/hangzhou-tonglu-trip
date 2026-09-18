@@ -272,6 +272,11 @@ button{font:inherit;cursor:pointer;border:0;background:none;color:inherit}
   font-size:15px;font-family:inherit;outline:none;background:#fff;color:var(--ink);
 }
 .field-row input:focus,.field-row textarea:focus,.field-row select:focus{border-color:var(--forest2);box-shadow:0 0 0 3px rgba(47,93,72,.1)}
+/* 住宿范围：两个下拉 + 一个「铺满这段」按钮，一行放得下（窄屏会换行） */
+.stay-range{display:flex;align-items:center;gap:7px;flex-wrap:wrap}
+.stay-range select{flex:1 1 0;width:auto;min-width:0;padding:9px 8px;font-size:13.5px}
+.stay-range .sr-sep{flex:0 0 auto;color:var(--ink3);font-size:13px}
+.stay-range .mini{flex:0 0 auto;white-space:nowrap}
 .field-row .half{display:grid;grid-template-columns:1fr 1fr;gap:10px}
 /* 金额算式实时计算提示 */
 .calc-hint{min-height:0;font-size:12.5px;margin-top:5px;letter-spacing:.02em;display:none}
