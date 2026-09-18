@@ -241,8 +241,10 @@ function renderTimeline() {
         ? escapeHtml(realTitle)
         : (place ? '' : '<span class="untitled">未填写安排</span>');
       // 有地点就带图钉；地点单独成行时可点，直接跳导航
+      // &#8288; 是 word joiner（零宽、不换行、不显示）：把「📍」和地名粘成一个整体，
+      // 折行时不会出现「📍」独占一行、地名跑到下一行的情况。
       const placeTag = place
-        ? `${realTitle ? ' · ' : ''}<span class="pin" data-act="nav-place" data-day="${di}" data-idx="${ii}" title="点击导航">📍${escapeHtml(place)}</span>`
+        ? `${realTitle ? ' · ' : ''}<span class="pin" data-act="nav-place" data-day="${di}" data-idx="${ii}" title="点击导航">📍&#8288;${escapeHtml(place)}</span>`
         : '';
       // 子地点：挂在父地点下面，各自独立定位、独立导航。
       // 过滤掉没有名字的脏数据，但保留原下标（data-sub 要指向 subs 里真正那一项）
@@ -253,7 +255,7 @@ function renderTimeline() {
         ? '<ul class="subs">' + subs.map(x => {
             const subNote = String(x.s.note || '').trim();
             const subPin = `<span class="pin" data-act="nav-sub" data-day="${di}" data-idx="${ii}"`
-              + ` data-sub="${x.si}" title="点击导航">📍${escapeHtml(String(x.s.name).trim())}</span>`;
+              + ` data-sub="${x.si}" title="点击导航">📍&#8288;${escapeHtml(String(x.s.name).trim())}</span>`;
             // 备注跟着子地点走：换行显示、纯展示不导航，但要点一下 stopPropagation，
             // 否则会冒泡到 .item-row 变成「导航去父地点」
             return `<li>${subPin}`
