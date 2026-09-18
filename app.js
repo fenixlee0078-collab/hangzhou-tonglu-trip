@@ -745,28 +745,9 @@ function renderExpenses() {
     return;
   }
 
-  // 按天分组
-  const byDate = new Map();
-  expenses.forEach((e, idx) => {
-    const d = e.date || '';
-    if (!byDate.has(d)) byDate.set(d, []);
-    byDate.get(d).push({ e, idx });
-  });
-  const keys = [...byDate.keys()].sort((a, b) => {
-    if (!a) return 1;
-    if (!b) return -1;
-    return a < b ? -1 : 1;
-  });
-
-  daysWrap.innerHTML = keys.map(k => {
-    const list = byDate.get(k);
-    const daySum = list.reduce((s, x) => s + (Number(x.e.amount) || 0), 0);
-    const label = k ? dateWithWeek(k) : '未指定日期';
-    return `<div class="exp-day">
-      <div class="exp-day-head"><b>${escapeHtml(label)}</b><span class="exp-day-sub">当日 ¥${daySum.toFixed(2)} · ${list.length} 笔</span></div>
-      <div class="exp-list">${list.map(x => expItemHTML(x.e, x.idx)).join('')}</div>
-    </div>`;
-  }).join('');
+  // 费用不再按日期分组：日期一栏已删（用户 2026-09-18「费用不用填日期，完全多此一举」）。
+  // 历史数据里残留的费用日期字段保留在文件里不动，只是不再读、不再显示 → 零迁移。
+  daysWrap.innerHTML = `<div class="exp-list">${expenses.map((e, idx) => expItemHTML(e, idx)).join('')}</div>`;
 }
 
 function expItemHTML(e, idx) {
@@ -2358,7 +2339,6 @@ function openExpModal(idx) {
   $('#e-amount').value = e ? (editingForeign ? (e.originalAmount ?? '') : (e.amount ?? '')) : '';
   updateAmountHint();
   $('#e-category').value = e ? (e.category || '交通') : '交通';
-  $('#e-date').value = e ? (e.date || '') : '';
   $('#e-payer').value = (e && e.payer) ? e.payer : (members[0] || '');
   $('#e-note').value = e ? (e.note || '') : '';
   renderPartCheck(e ? e.participants : null);
@@ -2545,7 +2525,6 @@ function saveExp() {
     title: $('#e-title').value.trim() || '未命名',
     amount: amt,
     category: $('#e-category').value || '其他',
-    date: $('#e-date').value,
     payer: solo ? (members[0] || '') : ($('#e-payer').value || members[0] || ''),
     participants: solo ? members.slice() : (selected.length ? selected : members),
     note: $('#e-note').value.trim(),
