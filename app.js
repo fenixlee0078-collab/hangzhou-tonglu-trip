@@ -1010,7 +1010,7 @@ function openItemModal(di, ii) {
 //   两个界面互不干扰，编辑弹窗也终于可以回归简单。
 let placeSearchTimer = null;
 let placeSearchSeq = 0;              // 防止旧请求覆盖新结果
-let placeSearchEnabled = null;       // 服务端是否配了高德 Key
+let placeSearchEnabled = null;       // 搜索是否可用（国内看高德 Key、海外看谷歌 Key）
 let placeResults = [];               // 当前候选列表
 let selectedIdx = -1;                // 面板里高亮/待确认的候选下标
 let pickedPlace = null;              // 用户已选定的地点 { name, lng, lat }
@@ -1343,6 +1343,9 @@ function listHTML(listing) {
 async function searchPlace(kw) {
   const seq = ++placeSearchSeq;
   const localHits = localPlaceHits(kw);
+  // 搜索走哪家由行程的 mapProvider 决定（国内=高德、海外=谷歌），文案跟着分叉 ——
+  // 不然国内行程里会冒出「试试英文名」「需要能访问谷歌的网络」这种读着莫名其妙的提示
+  const overseas = tripConfig.mapProvider === 'google';
   // 无 Key：只用本地词典 + 兜底项，不发请求
   if (placeSearchEnabled === false) {
     commitPlaceResults(localHits, kw, '');
@@ -1358,26 +1361,33 @@ async function searchPlace(kw) {
     if (!d.ok) {
       if (seq !== placeSearchSeq) return;
       const msg = d.reason === 'nokey'
-        ? '未配置地图搜索服务，只能用下面的常用地点'
-        : '搜索服务暂时不可用，可先用下面的常用地点';
+        ? (overseas ? '未配置谷歌地图 Key，只能用下面的常用地点'
+                    : '未配置高德 Key，只能用下面的常用地点')
+        : (d.reason === 'amap'
+            ? `高德搜索被拒（${d.error || '原因未知'}），可先用下面的常用地点`
+            : (overseas ? '搜索服务暂时不可用，可先用下面的常用地点'
+                        : '高德搜索暂时不可用，可先用下面的常用地点'));
       commitPlaceResults(localHits, kw, msg);
       return;
     }
-    // 一条也没搜到：分清两种情况给出对应办法，别让用户干等
-    // 1) 中文关键词 —— 线上地图库（OSM）没有中文名索引，换英文名/当地语言名往往就能搜到
-    // 2) 英文关键词 —— 库里根本没收录这个小众店名/酒店名，只能先按名称记上
+    // 一条也没搜到：按地图源给真正能照做的下一步，别让用户干等
+    // · 海外（谷歌）：中文名它不认 → 换英文/当地语言名；冷门店名它库里就没有 → 只能按名称记上
+    // · 国内（高德）：中文召回很好，「搜不到」基本都是名字太简略 → 补全成「区县 + 名字」就有
     if (d.hint === 'no-local-match') {
       if (seq !== placeSearchSeq) return;
       const isZh = /[\u4e00-\u9fff]/.test(kw);
-      commitPlaceResults(localHits, kw, isZh
-        ? '没搜到，试试英文名或当地语言名（例：Wat Arun），或用下面的位置'
-        : '谷歌也没搜到这个地点，可以先用「按名称」记上');
+      commitPlaceResults(localHits, kw, overseas
+        ? (isZh
+            ? '没搜到这个中文名，试试英文名或当地语言名（例：Wat Arun），或用下面的位置'
+            : '线上地图库里没有收录这个地点（小众店名/酒店名基本只有谷歌地图有），可以先用「按名称」记上')
+        : '高德没搜到这个地方，把名字写完整点再试（例：桐庐县第一人民医院），或用下面的位置');
       return;
     }
     commitPlaceResults(localHits.concat(d.results || []), kw, '');
   } catch (e) {
     if (seq !== placeSearchSeq) return;
-    commitPlaceResults(localHits, kw, '网络异常，可先用下面的常用地点');
+    commitPlaceResults(localHits, kw,
+      overseas ? '网络异常，可先用下面的常用地点' : '高德搜索连不上，可先用下面的常用地点');
   }
 }
 
