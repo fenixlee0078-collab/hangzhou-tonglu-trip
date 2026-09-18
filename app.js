@@ -165,6 +165,8 @@ function toast(msg) {
 // ===== 渲染 =====
 function render() {
   if (!state) return;
+  // 名单里若还留着「2人」这种老写法，先还原成角色再渲染（只跑一次，改完立刻落盘）
+  if (normalizeMembersOnce()) { commit(); return; }
   renderHero();
   renderTimeline();
   renderFooter();
@@ -297,14 +299,104 @@ function renderFooter() {
 // 老行程的数据零迁移；改称呼 / 移除成员时会顺带把历史费用里的引用一起改掉，
 // 否则费用里会留下一个不在名单上的人，净额加不出 0，账就悄悄不平了。
 const MEMBER_PRESETS = ['我', '老婆', '老公', '孩子', '爸爸', '妈妈', '朋友', '同事'];
+const PARTY_SIZES = [1, 2, 3, 4, 5, 6];   // 人数快捷；再多用「＋」
+const PARTY_MAX = 8;
+
+// 默认角色名用 A、B、C…：还不知道这趟都有谁的时候，字母最中立 ——
+// 既不会替你把名单假设成「我/朋友」，也不会把人数写成「2人」这种认不出是谁的字符串。
+function roleName(i) {
+  return i < 26 ? String.fromCharCode(65 + i) : 'R' + (i - 25);
+}
+function defaultMembers(n) {
+  return Array.from({ length: n }, (_, i) => roleName(i));
+}
 
 function tripMembers() {
   return (state.meta.members || []).map(m => String(m).trim()).filter(Boolean);
 }
 
+// 是不是「只有我一个人去」。单人行程不该被要求选垫付人、也不存在分摊。
+function isSolo() { return tripMembers().length <= 1; }
+
+// 早年（或生成时）可能把整份名单写成了「2人」这种人数 —— 认不出是谁，也没法对账。
+// 这里把它还原成 2 个默认角色 A、B；历史费用里引用到「2人」的地方一并展开成这两个角色，
+// 别让那笔钱变成对不上任何人的孤账。返回 true 表示改动过。
+function normalizeMembers() {
+  const cur = tripMembers();
+  const hit = cur.find(m => /^\d+\s*人$/.test(m));
+  if (!hit) return false;
+  const n = Math.max(1, Math.min(Number(hit.match(/^(\d+)/)[1]) || 2, PARTY_MAX));
+  const next = defaultMembers(n);
+  (state.expenses || []).forEach(e => {
+    if (e.payer === hit) e.payer = next[0];
+    if (Array.isArray(e.participants)) {
+      const out = [];
+      e.participants.forEach(p => {
+        (p === hit ? next : [p]).forEach(x => { if (x && !out.includes(x)) out.push(x); });
+      });
+      e.participants = out;
+    }
+  });
+  state.meta.members = next;
+  return true;
+}
+
+// 只在名单真的变了才跑一次（否则每次 render 都写盘会自己打转）
+let membersKey = '';
+function normalizeMembersOnce() {
+  const key = (state.meta.members || []).join('\u0001');
+  if (key === membersKey) return false;
+  membersKey = key;
+  if (!normalizeMembers()) return false;
+  membersKey = (state.meta.members || []).join('\u0001');
+  return true;
+}
+
+// 补人时从「第几个位置」往后找第一个没被占用的字母，避免和改过的称呼撞名
+function nextRoleName(list, from) {
+  for (let i = from; i < from + 40; i++) {
+    const nm = roleName(i);
+    if (!list.includes(nm)) return nm;
+  }
+  return 'R' + list.length;
+}
+
 let memberDraft = [];     // 编辑中的成员名单（点「保存」才写进 state）
 let memberOps = [];       // 本次编辑的改名 / 移除记录，保存时一次性应用到费用上
 let memberEditing = -1;   // 正在改称呼的成员下标，-1 = 没在改
+
+// 人数和名单长度永远是同一件事；这里只负责把「几个人」画成能点的东西。
+function renderPartyPick() {
+  const wrap = $('#m-party');
+  if (!wrap) return;
+  const n = memberDraft.length;
+  wrap.innerHTML = PARTY_SIZES.map(k =>
+    `<button type="button" class="party-chip${k === n ? ' on' : ''}" data-act="set-party" data-n="${k}">${k} 人</button>`
+  ).join('')
+    + `<button type="button" class="party-chip plus" data-act="party-add" title="再加一个人"${n >= PARTY_MAX ? ' disabled' : ''}>＋</button>`;
+  const mode = $('#m-party-mode');
+  if (mode) {
+    mode.textContent = n <= 1
+      ? '单人行程：记费用不用选垫付人，也不分摊'
+      : `${n} 人同行：记费用选「谁垫的钱」，按参与人数平摊`;
+  }
+}
+
+// 点「3 人」= 名单变 3 个角色；改过称呼的位置保留，只在尾巴上补 / 减
+function setParty(n) {
+  const want = Math.max(1, Math.min(n, PARTY_MAX));
+  const cur = memberDraft.slice();
+  if (want === cur.length) return;
+  if (want > cur.length) {
+    while (cur.length < want) cur.push(nextRoleName(cur, cur.length));
+  } else {
+    cur.slice(want).forEach(m => memberOps.push({ op: 'delete', name: m }));
+    cur.length = want;
+  }
+  memberDraft = cur;
+  memberEditing = -1;
+  renderMemberEditor();
+}
 
 function renderMemberEditor() {
   const wrap = $('#m-member-list');
@@ -315,8 +407,9 @@ function renderMemberEditor() {
       ? `<span class="mem-chip editing"><input class="mem-edit" id="m-member-edit" value="${escapeHtml(m)}" maxlength="12" /></span>`
       : `<span class="mem-chip"><button type="button" class="mem-name" data-act="ren-member" data-i="${i}" title="点一下改称呼">${escapeHtml(m)}</button><button type="button" class="mem-del" data-act="del-member" data-i="${i}" title="移除">✕</button></span>`
     ).join('')
-    : '<span class="mem-empty">还没有成员。在下面填称呼添加，比如「我」「老婆」「孩子」。</span>';
+    : '<span class="mem-empty">还没有同行成员。上面先选几个人，再点名字改成称呼。</span>';
 
+  renderPartyPick();
   const pre = $('#m-member-presets');
   if (pre) {
     pre.innerHTML = MEMBER_PRESETS.filter(p => !memberDraft.includes(p))
@@ -332,6 +425,7 @@ function addMember(raw) {
   const v = String(raw || '').trim();
   if (!v) return false;
   if (v.length > 12) { toast('称呼最多 12 个字'); return false; }
+  if (memberDraft.length >= PARTY_MAX) { toast('最多 ' + PARTY_MAX + ' 个人'); return false; }
   if (memberDraft.includes(v)) { toast('已经有一个「' + v + '」了'); return false; }
   memberDraft.push(v);
   memberOps.push({ op: 'add', name: v });
@@ -415,6 +509,16 @@ function bindMemberEditor() {
     });
   }
 
+  const partyWrap = $('#m-party');
+  if (partyWrap) {
+    partyWrap.addEventListener('click', (ev) => {
+      const btn = ev.target.closest('[data-act]');
+      if (!btn || btn.disabled) return;
+      if (btn.dataset.act === 'set-party') setParty(Number(btn.dataset.n));
+      else if (btn.dataset.act === 'party-add') setParty(memberDraft.length + 1);
+    });
+  }
+
   const presetWrap = $('#m-member-presets');
   if (presetWrap) {
     presetWrap.addEventListener('click', (ev) => {
@@ -459,11 +563,14 @@ function renderExpenses() {
   const debtors = members.filter(m => net[m] < -0.005).sort((a, b) => net[a] - net[b]);
   const creditors = members.filter(m => net[m] > 0.005).sort((a, b) => net[b] - net[a]);
 
+  const solo = members.length <= 1;
   let settleHTML;
   if (!members.length) {
     settleHTML = '<span class="zero">还没添加同行成员，先在页脚「✏️ 行程信息」里加上，才能算谁该给谁钱</span>';
   } else if (!expenses.length) {
     settleHTML = '<span class="zero">还没有记录费用</span>';
+  } else if (solo) {
+    settleHTML = '<span class="zero">单人行程，不用结算</span>';
   } else if (!debtors.length && !creditors.length) {
     settleHTML = '<span class="zero">✓ 已平摊，无需转账</span>';
   } else if (members.length === 2 && debtors.length === 1 && creditors.length === 1) {
@@ -488,11 +595,25 @@ function renderExpenses() {
     ? `<div class="exp-warn">⚠️ 有 ${orphanNames.reduce((s, k) => s + orphanMap[k], 0)} 笔费用的垫付人「${orphanNames.map(escapeHtml).join('、')}」已不在成员名单里，点这几条重选一下垫付人才能算平</div>`
     : '';
 
+  // 每个角色实际该出多少：这笔钱几个人分就摊几份，没参与的就不背。
+  // 所有人都参与时，它正好就是「总支出 ÷ 人数」。
+  const share = {};
+  members.forEach(m => { share[m] = 0; });
+  expenses.forEach(e => {
+    const amt = Number(e.amount) || 0;
+    const parts = (e.participants && e.participants.length) ? e.participants : members;
+    if (!parts.length) return;
+    parts.forEach(p => { share[p] = (share[p] || 0) + amt / parts.length; });
+  });
+  const sharesHTML = (solo || !expenses.length) ? '' : `
+    <div class="exp-shares"><span class="sh-lbl">每人应出</span>${members.map(m =>
+      `<span class="exp-share"><b>${escapeHtml(m)}</b><span>¥${(share[m] || 0).toFixed(2)}</span></span>`).join('')}</div>`;
+
   summary.innerHTML = `
     <div class="exp-summary-top">
       <div class="exp-total"><div class="lbl">总支出</div><div class="num">¥${total.toFixed(2)}</div></div>
-      <div class="exp-avg"><div class="lbl">人均 · ${members.length} 人</div><div class="num">¥${avg.toFixed(2)}</div></div>
-    </div>
+      <div class="exp-avg"><div class="lbl">${solo ? '个人支出' : `人均 · ${members.length} 人`}</div><div class="num">¥${avg.toFixed(2)}</div></div>
+    </div>${sharesHTML}
     <div class="exp-settle"><span>结算</span>${settleHTML}</div>${orphanHTML}`;
 
   if (!expenses.length) {
@@ -527,6 +648,7 @@ function renderExpenses() {
 function expItemHTML(e, idx) {
   const amt = Number(e.amount) || 0;
   const members = tripMembers();
+  const solo = members.length <= 1;
   const parts = (e.participants && e.participants.length) ? e.participants : members;
   const per = parts.length ? amt / parts.length : amt;
   const cat = e.category || '其他';
@@ -535,15 +657,18 @@ function expItemHTML(e, idx) {
   const who = e.payer
     ? `<span class="who${orphan ? ' miss' : ''}">${escapeHtml(e.payer)}</span> 垫付`
     : '<span class="who miss">未填垫付人</span>';
+  // 单人行程没有「分摊」这回事，就别在每一条上重复写它
+  const sub = solo ? who : `${who} · ${parts.length} 人分摊`;
+  const right = solo ? '' : `<div class="p">人均 ¥${per.toFixed(2)}</div>`;
   return `<div class="exp-item" data-act="edit-exp" data-idx="${idx}">
     <span class="exp-cat exp-cat-${escapeHtml(cat)}">${escapeHtml(cat)}</span>
     <div class="exp-main">
       <div class="t">${escapeHtml(e.title || '未命名')}</div>
-      <div class="s">${who} · ${parts.length} 人分摊</div>
+      <div class="s">${sub}</div>
     </div>
     <div class="exp-amt">
       <div class="a">¥${amt.toFixed(2)}</div>
-      <div class="p">人均 ¥${per.toFixed(2)}</div>
+      ${right}
     </div>
   </div>`;
 }
@@ -1832,6 +1957,12 @@ function openExpModal(idx) {
   $('#e-payer').value = (e && e.payer) ? e.payer : (members[0] || '');
   $('#e-note').value = e ? (e.note || '') : '';
   renderPartCheck(e ? e.participants : null);
+  // 单人行程没有「谁垫的钱」这回事，也没人可以分，这两行直接收起来
+  const solo = members.length <= 1;
+  [$('#e-payer'), $('#e-participants')].forEach(el => {
+    const row = el && el.closest('.field-row');
+    if (row) row.hidden = solo;
+  });
   $('#btn-del-exp').style.display = e ? '' : 'none';
   closeCalc();               // 每次打开弹窗重置计算器面板
   calcExpr = '';
@@ -1986,13 +2117,15 @@ function saveExp() {
   const amt = Math.round(evaluated * 100) / 100;
   if (!amt) { toast('请填写金额'); return; }
   if (amt < 0) { toast('金额不能为负数'); return; }
+  // 单人行程不存在分摊：钱就是他花的，名单里也只有他一个
+  const solo = members.length <= 1;
   const data = {
     title: $('#e-title').value.trim() || '未命名',
     amount: amt,
     category: $('#e-category').value || '其他',
     date: $('#e-date').value,
-    payer: $('#e-payer').value || members[0] || '',
-    participants: selected.length ? selected : members,
+    payer: solo ? (members[0] || '') : ($('#e-payer').value || members[0] || ''),
+    participants: solo ? members.slice() : (selected.length ? selected : members),
     note: $('#e-note').value.trim()
   };
   if (editingExp === -1) {
