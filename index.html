@@ -134,6 +134,7 @@
       <div class="modal-head"><h3 id="day-modal-title">编辑这一天</h3><button class="modal-close" id="day-close">✕</button></div>
       <div class="modal-body">
         <!-- 住宿：连住同一家酒店时不必一天一天重复填 —— 选个起止天，一次铺满这段。
+             终点选的是「退房日」，那天已经退房不住，所以不会填（＝只填到退房日前一天）。
              只改 day.stay，数据结构不变，老行程的数据与云端同步都不受影响。 -->
         <div class="field-row">
           <label>住宿 <span class="lbl-hint">同一家住多天，可用下面的范围一次填好</span></label>
@@ -141,7 +142,7 @@
           <datalist id="stay-list"></datalist>
         </div>
         <div class="field-row">
-          <label>住这几天 <span class="lbl-hint">含首尾两天</span></label>
+          <label>住这几天 <span class="lbl-hint">终点选退房日，退房当天不填</span></label>
           <div class="stay-range">
             <select id="d-stay-from"></select>
             <span class="sr-sep">→</span>
@@ -381,6 +382,6 @@
        顺序要紧：site-config.js（站点配置）→ static-bridge.js（先定义 io/fetch 替身）→ app.js -->
   <script src="site-config.js?v=1"></script>
   <script src="static-bridge.js?v=6"></script>
-  <script src="app.js?v=4"></script>
+  <script src="app.js?v=5"></script>
 </body>
 </html>
