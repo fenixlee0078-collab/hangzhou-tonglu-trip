@@ -485,8 +485,7 @@ button{font:inherit;cursor:pointer;border:0;background:none;color:inherit}
 .pp-search input{
   flex:1;min-width:0;border:none;background:transparent;outline:none;
   font-size:15px;color:var(--ink);padding:0;
-  /* iOS 上字号小于 16px 会触发自动放大，这里显式关掉 */
-  -webkit-text-size-adjust:100%;
+  /* 桌面留 15px 无妨；触屏上会被文件末尾那条 16px 规则接管 —— 见那里的说明 */
 }
 .pp-clear{
   flex:none;width:20px;height:20px;border-radius:50%;border:none;cursor:pointer;
@@ -767,4 +766,23 @@ button{font:inherit;cursor:pointer;border:0;background:none;color:inherit}
   .sec-head h2{font-size:19px}
   .nav-options{flex-direction:column}
   .foot{padding-bottom:30px}
+}
+
+/* ---------- 触屏设备：表单控件字号一律 ≥16px（否则 iOS 会自动放大整个页面） ---------- */
+/* iOS Safari 的硬规则：聚焦的 input / select / textarea 只要 computed font-size 小于 16px，
+   Safari 就把整个页面放大（倍数 ≈ 16 ÷ 该控件字号，13px 的框＝1.23 倍）好让用户看清输入框，
+   而且**失焦之后不会还原** —— 现象就是「一编辑，整页变大、内容左右被裁，得手动捏合才回去」。
+   2026-09-18 用户反馈「为什么总是自己放大？默认缩放到最小不行吗」就是它。
+
+   三条看起来能治、其实都治不了的做法（别再走一遍弯路）：
+     ① -webkit-text-size-adjust:100%：只管横屏时的文字自适应，跟聚焦放大完全无关
+     ② maximum-scale=1：iOS 10+ 为无障碍忽略（Safari 要保证用户能捏合放大）
+     ③ user-scalable=no：同样被忽略；万一真生效了，反而害需要放大看小字的用户
+
+   唯一可靠的做法：让控件自己的字号达标。这里用 !important 全量兜底 ——
+   以后新增输入框不必逐个补，漏掉一个就又会触发放大。 */
+@media (pointer: coarse),(max-width:820px){
+  input,select,textarea{font-size:16px !important}
+  /* 顺带关掉双击缩放（误双击不再把页面放大）；捏合缩放不受影响 */
+  html,body{touch-action:manipulation}
 }
