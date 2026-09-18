@@ -9,6 +9,9 @@ body{
   font-family:system-ui,-apple-system,"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Segoe UI",Roboto,sans-serif;
   font-size:15px;
   line-height:1.75;
+  /* 全局兜底：任何地方出现长到放不下的文本（长站名、长英文串）都在必要时折断，
+     而不是横着冲出卡片。正常排版不受影响 —— 只在放不下时才生效。 */
+  overflow-wrap:anywhere;
   -webkit-font-smoothing:antialiased;
   padding-bottom:40px;
 }
@@ -144,19 +147,26 @@ button{font:inherit;cursor:pointer;border:0;background:none;color:inherit}
 .tl-item.no-time .item-row{grid-template-columns:1fr}
 .tl .time{font-size:12.5px;font-weight:700;color:var(--clay);letter-spacing:.02em;padding-top:1px}
 .tl .body{min-width:0}
-.tl .body .t{font-weight:600;font-size:14.5px;color:var(--ink)}
+.tl .body .t{font-weight:600;font-size:14.5px;color:var(--ink);overflow-wrap:anywhere;word-break:break-word}
+/* 地点标签必须允许折行。
+   这里以前写着 white-space:nowrap，本意是别把「📍地名」拆开，
+   但遇到长站名（Krang Thep Aphiwat Central Terminal Station (Bang Sue Grand Station)）
+   整行就横着冲出卡片，手机上整页都能左右拖。改成 anywhere + break-word：
+   正常短地名一行放得下就还是一行，放不下才折，长英文串也能在词中间断开。 */
 .tl .body .t .pin{color:var(--moss);cursor:pointer;border-radius:5px;padding:1px 4px;margin:-1px -4px;
-  transition:background .14s;white-space:nowrap}
+  transition:background .14s;overflow-wrap:anywhere;word-break:break-word}
 .tl .body .t .pin:hover{background:rgba(110,143,118,.13)}
 .tl .body .t .pin:active{background:rgba(110,143,118,.22)}
 /* 长按中：给点触感反馈，松开/长按生效即恢复 */
 .tl-item .item-row.pressing{background:linear-gradient(90deg,transparent,rgba(110,143,118,.14))}
-.tl .body .n{font-size:13px;color:var(--ink2);margin-top:2px}
+.tl .body .n{font-size:13px;color:var(--ink2);margin-top:2px;overflow-wrap:anywhere;word-break:break-word}
 .tl .body .n:empty{display:none}
 .day-foot{
   margin-top:14px;padding-top:13px;border-top:1px dashed var(--line);
   font-size:13px;color:var(--ink2);display:flex;flex-wrap:wrap;gap:6px 20px;cursor:pointer;
 }
+/* 住宿那一行，flex 子项要给 min-width:0 才肯收缩，否则长酒店名会把整卡撑宽 */
+.day-foot span{min-width:0;overflow-wrap:anywhere;word-break:break-word}
 .day-foot b{color:var(--forest2);font-weight:600}
 .day-foot:hover{color:var(--forest2)}
 
@@ -402,9 +412,12 @@ button{font:inherit;cursor:pointer;border:0;background:none;color:inherit}
 
 /* 时间线里的子地点行：挂在父地点下面，缩进 + 小字号 */
 .tl .body .subs{list-style:none;margin:3px 0 0;padding:0;display:flex;flex-direction:column;gap:1px}
+/* 纵向 flex 的子项同样要给 min-width:0，否则长子地点名会顶宽整列 */
+.tl .body .subs li{min-width:0}
 .tl .body .subs .pin{
   color:var(--moss);cursor:pointer;border-radius:5px;padding:1px 4px;margin:0 -4px;
   font-size:13px;font-weight:500;display:inline-block;max-width:100%;
+  overflow-wrap:anywhere;word-break:break-word;
 }
 .tl .body .subs .pin::before{content:'↳ ';color:var(--ink3);font-size:12px}
 .tl .body .subs .pin:hover{background:rgba(110,143,118,.13)}
