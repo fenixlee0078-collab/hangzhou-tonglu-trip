@@ -489,6 +489,10 @@
       // 点导航却打开谷歌」这种自相矛盾
       mapProvider: provider(),
       cityName: CFG.cityName || '',
+      // 目的地别名 + 记账币种：费用弹窗靠它们定「这趟默认用哪种货币记账」
+      // （写在 site-config 里，生成行程时按目的地算好；海外/港澳台行程才用得上）
+      cityAliases: CFG.cityAliases || [],
+      currency: CFG.currency || '',
       searchCity: CFG.searchCity || '',
       searchCenter: [Number(c.lng) || 0, Number(c.lat) || 0],
       amapKeyConfigured: !!akey(),
