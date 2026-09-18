@@ -676,6 +676,29 @@ button{font:inherit;cursor:pointer;border:0;background:none;color:inherit}
 .mem-hint.warn{color:#B4762A}
 .mem-hint[hidden]{display:none}
 .mem-empty{font-size:12.5px;color:var(--ink3);padding:2px 0}
+/* 「几个人」：点一下就把角色铺出来，不用自己一个个加 */
+.party-pick{display:flex;flex-wrap:wrap;gap:6px}
+.party-chip{
+  border:1px solid var(--line);border-radius:10px;background:#fff;
+  color:var(--ink2);font-size:13px;font-weight:600;font-family:inherit;padding:5px 13px;
+}
+.party-chip:hover{border-color:var(--forest2);color:var(--forest2)}
+.party-chip.on{border-color:var(--forest2);background:var(--t-a,#EAF3EE);color:var(--forest2)}
+.party-chip.plus{padding:5px 11px;font-weight:700}
+.party-chip[disabled]{opacity:.38;cursor:not-allowed}
+
+/* 每个角色各该出多少（多人行程才显示）*/
+.exp-shares{
+  margin-top:13px;padding-top:12px;border-top:1px solid rgba(255,255,255,.14);
+  display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;position:relative;z-index:1;
+}
+.exp-shares .sh-lbl{font-size:11px;letter-spacing:.14em;color:var(--next-label)}
+.exp-share{
+  display:inline-flex;align-items:center;gap:5px;
+  background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.16);
+  border-radius:999px;padding:3px 11px;font-size:12.5px;color:#fff;
+}
+.exp-share b{font-weight:700;color:var(--sun)}
 
 /* 费用条目里的「谁垫的」：对不上成员名单的显眼标出来 */
 .exp-main .s .who{color:var(--ink2);font-weight:600}
