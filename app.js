@@ -831,15 +831,15 @@ function openDayModal(di) {
   editingDay = di;
   const day = state.days[di];
   $('#day-modal-title').textContent = `编辑 Day ${di + 1}`;
-  // 主题 / 副标题 / 标签已下线，这里只维护「住宿」和「日期」
+  // 住宿名 + 起止日期；保存时一次把这段填好。
+  // 这一天自己的日期不在这里改 —— 「行程信息」里改起止日会整体重算，单改一天没有意义。
   $('#d-stay').value = day.stay || '';
-  $('#d-date').value = day.date || '';
   fillStayRange();
   $('#day-mask').classList.add('show');
 }
 
-// ===== 住宿：一次铺满一段 =====
-// 连住同一家酒店时一天一天重复填很容易漏掉某天；这里选个起止天，一次写进这段的每一天。
+// ===== 住宿：选起止日期，保存时一次铺满这段 =====
+// 连住同一家酒店时一天一天重复填很容易漏掉某天；这里选个起止日期，一次写进这段的每一天。
 // 只改 day.stay，不动数据结构 —— 老行程的数据、云端同步、导出都不受影响。
 
 // 两个下拉列出本行程所有天（带日期和星期，避免选错）
@@ -854,11 +854,26 @@ function fillStayRange() {
   // （选到行程最后一天会被当成退房日，反而少填一天）。
   to.innerHTML = opts +
     `<option value="${state.days.length}">住满全程（${state.days.length} 天都住）</option>`;
-  const cur = String(Math.max(0, editingDay));
-  from.value = cur;
-  to.value = cur;
+  // 默认值 = 这一天所在的那段住宿。所以 D1 / D2 点开看到的都是上次选的 D1→D3，
+  // 不会每次都退回「当天 → 当天」让人以为又要重新选一遍。
+  const blk = stayBlockAround(editingDay);
+  from.value = String(blk.lo);
+  to.value = String(blk.checkout);
   fillStayDatalist();
-  updateStayHint();
+}
+
+// 找出「这一天所在的这段住宿」：同一家名字连续覆盖的那一段。
+// 返回 lo（入住那天）、checkout（退房日；这段一直住到行程末尾时 = state.days.length，即「住满全程」）。
+function stayBlockAround(di) {
+  const n = state.days.length;
+  const i = Math.max(0, Math.min(di, n - 1));
+  const name = ((state.days[i] || {}).stay || '').trim();
+  // 还没填过住宿：默认「住这一晚」＝当天入住、次日退房；已是最后一天就用「住满全程」
+  if (!name) return { lo: i, checkout: i + 1 < n ? i + 1 : n };
+  let lo = i, hi = i;
+  while (lo > 0 && ((state.days[lo - 1].stay || '').trim() === name)) lo--;
+  while (hi < n - 1 && ((state.days[hi + 1].stay || '').trim() === name)) hi++;
+  return { lo, checkout: hi + 1 < n ? hi + 1 : n };
 }
 
 // 把行程里填过的住宿名做成候选项：同一家酒店住第二段时直接选，不用重打
@@ -869,7 +884,7 @@ function fillStayDatalist() {
   dl.innerHTML = names.map(n => `<option value="${escapeHtml(n)}"></option>`).join('');
 }
 
-// 边界怎么算，两处（提示 / 落数据）都用它，避免两边说法不一致。
+// 边界怎么算，填 / 清两处都用它，避免两边说法不一致。
 // 语义：终点选的这天是「退房日」，那天已经退房不住了，所以不填 —— 只填到「退房日 - 1」。
 // 例：9.26 入住、9.28 退房 → 终点选 9.28，住宿落在 9.26、9.27 两晚。
 function stayRangeBounds(a, b) {
@@ -878,53 +893,32 @@ function stayRangeBounds(a, b) {
   return { lo, hi, end, nights: end - lo + 1, checkout: hi > lo ? hi : -1 };
 }
 
-// 实时说明「这一步会写哪几天」，不让用户稀里糊涂改掉一堆数据
-function updateStayHint() {
-  const hint = $('#stay-range-hint');
-  const btn = $('#btn-apply-stay');
-  const a = parseInt($('#d-stay-from').value, 10);
-  const b = parseInt($('#d-stay-to').value, 10);
-  if (!hint || isNaN(a) || isNaN(b)) { if (hint) hint.classList.remove('show'); return; }
-  const { lo, end, nights, checkout } = stayRangeBounds(a, b);
-  const name = $('#d-stay').value.trim();
-  const lastIdx = state.days.length - 1;
-  // 只选了一天（没形成跨度）时，用户最容易以为「填了名字点一下就会铺满」。
-  // 所以这里两件事一起做：提示里把下一步说清楚，按钮也改口叫「只填这天」。
-  const tail = checkout < 0
-    ? ' —— 想连住几天，把「退房」选到后面的日期'
-    : checkout > lastIdx
-      ? '（住到行程结束，最后一天也填）'
-      : `（D${checkout + 1} 是退房日，不填）`;
-  hint.textContent = nights === 1
-    ? `只会填 D${lo + 1} 这天${tail}`
-    : `会把「${name || '这个住宿'}」填到 D${lo + 1}—D${end + 1}，共 ${nights} 天${tail}`;
-  hint.classList.add('show');
-  if (btn) btn.textContent = checkout < 0 ? '只填这天' : '铺满这段';
-}
-function applyStayRange() {
+// 保存：把这段日期写成同一个住宿名；名字清空 = 把这段的住宿一起清掉。
+// 唯一的写入入口 —— 没有额外的「铺满这段」按钮，选了日期点保存就生效。
+function saveDay() {
   if (editingDay < 0) return;
   const name = $('#d-stay').value.trim();
-  if (!name) { toast('先在上面填住宿的名字'); return; }
   const a = parseInt($('#d-stay-from').value, 10);
   const b = parseInt($('#d-stay-to').value, 10);
   if (isNaN(a) || isNaN(b)) return;
-  // 起止选反了也照填（用户按 D3→D1 选，本意就是这段）
   const { lo, end, hi, nights } = stayRangeBounds(a, b);
+  if (!name) {
+    let cleared = 0;
+    for (let i = lo; i <= end; i++) {
+      if (state.days[i] && (state.days[i].stay || '')) { state.days[i].stay = ''; cleared++; }
+    }
+    if (!cleared) { closeDayModal(); return; }
+    commit();
+    closeDayModal();
+    toast(nights > 1 ? `已清除 D${lo + 1}—D${end + 1} 的住宿` : `已清除 D${lo + 1} 的住宿`);
+    return;
+  }
   for (let i = lo; i <= end; i++) if (state.days[i]) state.days[i].stay = name;
   commit();
   closeDayModal();
-  const note = hi > state.days.length - 1 ? '住满全程' : `D${hi + 1} 退房不填`;
-  toast(hi > lo
-    ? `已把「${name}」填到 D${lo + 1}—D${end + 1}（${nights} 天，${note}）`
-    : `已把「${name}」填到 D${lo + 1}（1 天）`);
-}
-function saveDay() {
-  if (editingDay < 0) return;
-  const day = state.days[editingDay];
-  day.stay = $('#d-stay').value.trim();
-  day.date = $('#d-date').value || day.date;
-  commit();
-  closeDayModal();
+  if (nights === 1) { toast(`已把「${name}」填到 D${lo + 1}（1 天）`); return; }
+  const note = hi > state.days.length - 1 ? '住到行程结束' : `D${hi + 1} 退房不填`;
+  toast(`已把「${name}」填到 D${lo + 1}—D${end + 1}（${nights} 天，${note}）`);
 }
 function deleteDay() {
   if (editingDay < 0) return;
@@ -1953,15 +1947,7 @@ function bindEvents() {
   ['#m-title', '#m-subtitle', '#m-location', '#m-members', '#m-remind', '#m-footer'].forEach(sel => {
     $(sel).addEventListener('keydown', (e) => { if (e.key === 'Enter') saveMeta(); });
   });
-  ['#d-stay', '#d-date'].forEach(sel => {
-    $(sel).addEventListener('keydown', (e) => { if (e.key === 'Enter') saveDay(); });
-  });
-  // 住宿范围：改选择或改名字只刷新提示，点「铺满这段」才真正写数据
-  ['#d-stay-from', '#d-stay-to'].forEach(sel => {
-    $(sel).addEventListener('change', updateStayHint);
-  });
-  $('#d-stay').addEventListener('input', updateStayHint);
-  $('#btn-apply-stay').addEventListener('click', applyStayRange);
+  $('#d-stay').addEventListener('keydown', (e) => { if (e.key === 'Enter') saveDay(); });
   $('#f-title').addEventListener('keydown', (e) => { if (e.key === 'Enter') saveItem(); });
 
   // ===== 地点搜索面板交互 =====
