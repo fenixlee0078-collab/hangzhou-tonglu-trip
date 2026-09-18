@@ -877,19 +877,23 @@ function stayRangeBounds(a, b) {
 // 实时说明「这一步会写哪几天」，不让用户稀里糊涂改掉一堆数据
 function updateStayHint() {
   const hint = $('#stay-range-hint');
-  if (!hint) return;
+  const btn = $('#btn-apply-stay');
   const a = parseInt($('#d-stay-from').value, 10);
   const b = parseInt($('#d-stay-to').value, 10);
-  if (isNaN(a) || isNaN(b)) { hint.classList.remove('show'); return; }
+  if (!hint || isNaN(a) || isNaN(b)) { if (hint) hint.classList.remove('show'); return; }
   const { lo, end, nights, checkout } = stayRangeBounds(a, b);
   const name = $('#d-stay').value.trim();
-  const tail = checkout >= 0 ? `（D${checkout + 1} 是退房日，不填）` : '';
+  // 只选了一天（没形成跨度）时，用户最容易以为「填了名字点一下就会铺满」。
+  // 所以这里两件事一起做：提示里把下一步说清楚，按钮也改口叫「只填这天」。
+  const tail = checkout < 0
+    ? ' —— 想连住几天，把「退房」选到后面的日期'
+    : `（D${checkout + 1} 是退房日，不填）`;
   hint.textContent = nights === 1
     ? `只会填 D${lo + 1} 这天${tail}`
     : `会把「${name || '这个住宿'}」填到 D${lo + 1}—D${end + 1}，共 ${nights} 天${tail}`;
   hint.classList.add('show');
+  if (btn) btn.textContent = checkout < 0 ? '只填这天' : '铺满这段';
 }
-
 function applyStayRange() {
   if (editingDay < 0) return;
   const name = $('#d-stay').value.trim();
