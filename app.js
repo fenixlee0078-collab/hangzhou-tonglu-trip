@@ -287,8 +287,151 @@ function renderTimeline() {
 }
 
 function renderFooter() {
-  const members = (state.meta.members || []).filter(m => String(m).trim());
-  $('#footerMembers').textContent = members.length ? members.map(m => escapeHtml(m.trim())).join('、') : '—';
+  const members = tripMembers();
+  $('#footerMembers').textContent = members.length ? members.map(m => escapeHtml(m)).join('、') : '—';
+}
+
+// ===== 同行成员（按角色区分）=====
+// 费用里的「垫付人」和「参与分摊的人」都从这份名单里选，所以名单必须是具体的人（角色），
+// 不能是「2人」这种认不出是谁、也没法对账的写法。数据结构仍是 meta.members: string[]，
+// 老行程的数据零迁移；改称呼 / 移除成员时会顺带把历史费用里的引用一起改掉，
+// 否则费用里会留下一个不在名单上的人，净额加不出 0，账就悄悄不平了。
+const MEMBER_PRESETS = ['我', '老婆', '老公', '孩子', '爸爸', '妈妈', '朋友', '同事'];
+
+function tripMembers() {
+  return (state.meta.members || []).map(m => String(m).trim()).filter(Boolean);
+}
+
+let memberDraft = [];     // 编辑中的成员名单（点「保存」才写进 state）
+let memberOps = [];       // 本次编辑的改名 / 移除记录，保存时一次性应用到费用上
+let memberEditing = -1;   // 正在改称呼的成员下标，-1 = 没在改
+
+function renderMemberEditor() {
+  const wrap = $('#m-member-list');
+  if (!wrap) return;
+  if (memberEditing >= memberDraft.length) memberEditing = -1;
+  wrap.innerHTML = memberDraft.length
+    ? memberDraft.map((m, i) => i === memberEditing
+      ? `<span class="mem-chip editing"><input class="mem-edit" id="m-member-edit" value="${escapeHtml(m)}" maxlength="12" /></span>`
+      : `<span class="mem-chip"><button type="button" class="mem-name" data-act="ren-member" data-i="${i}" title="点一下改称呼">${escapeHtml(m)}</button><button type="button" class="mem-del" data-act="del-member" data-i="${i}" title="移除">✕</button></span>`
+    ).join('')
+    : '<span class="mem-empty">还没有成员。在下面填称呼添加，比如「我」「老婆」「孩子」。</span>';
+
+  const pre = $('#m-member-presets');
+  if (pre) {
+    pre.innerHTML = MEMBER_PRESETS.filter(p => !memberDraft.includes(p))
+      .map(p => `<button type="button" class="mem-preset" data-act="add-preset" data-name="${escapeHtml(p)}">＋${escapeHtml(p)}</button>`).join('');
+  }
+  if (memberEditing >= 0) {
+    const inp = $('#m-member-edit');
+    if (inp) { inp.focus(); inp.select(); }
+  }
+}
+
+function addMember(raw) {
+  const v = String(raw || '').trim();
+  if (!v) return false;
+  if (v.length > 12) { toast('称呼最多 12 个字'); return false; }
+  if (memberDraft.includes(v)) { toast('已经有一个「' + v + '」了'); return false; }
+  memberDraft.push(v);
+  memberOps.push({ op: 'add', name: v });
+  renderMemberEditor();
+  toast('已添加「' + v + '」');
+  return true;
+}
+
+// 改称呼：回车 / 失焦即确认。确认前先把 memberEditing 清掉，
+// 否则重绘把输入框摘下来时还会再派发一次失焦，重复提交。
+function commitMemberRename(raw) {
+  const i = memberEditing;
+  if (i < 0 || i >= memberDraft.length) return;
+  memberEditing = -1;
+  const old = memberDraft[i];
+  const v = String(raw || '').trim();
+  if (!v) {                                        // 清空 = 移除这个人
+    memberDraft.splice(i, 1);
+    memberOps.push({ op: 'delete', name: old });
+  } else if (v !== old) {
+    if (memberDraft.includes(v)) {
+      toast('已经有一个「' + v + '」了');
+    } else {
+      memberDraft[i] = v;
+      memberOps.push({ op: 'rename', from: old, to: v });
+    }
+  }
+  renderMemberEditor();
+}
+
+function removeMember(i) {
+  const old = memberDraft[i];
+  if (old === undefined) return;
+  memberDraft.splice(i, 1);
+  memberOps.push({ op: 'delete', name: old });
+  memberEditing = -1;
+  renderMemberEditor();
+}
+
+// 保存行程信息时应用：改称呼要跟着历史费用走，否则那些账会变成「不属于任何人」
+function applyMemberOps() {
+  const renamed = {};
+  const removed = [];
+  memberOps.forEach(o => {
+    if (o.op === 'rename') renamed[o.from] = o.to;
+    else if (o.op === 'delete') removed.push(o.name);
+  });
+  if (Object.keys(renamed).length || removed.length) {
+    (state.expenses || []).forEach(e => {
+      if (e.payer && renamed[e.payer]) e.payer = renamed[e.payer];
+      if (Array.isArray(e.participants)) {
+        let list = e.participants.map(p => renamed[p] || p);
+        if (removed.length) list = list.filter(p => !removed.includes(p));
+        e.participants = list;
+      }
+    });
+  }
+  state.meta.members = memberDraft.slice();
+  memberOps = [];
+  memberEditing = -1;
+}
+
+function bindMemberEditor() {
+  const list = $('#m-member-list');
+  if (list) {
+    list.addEventListener('click', (ev) => {
+      const btn = ev.target.closest('[data-act]');
+      if (!btn) return;
+      const act = btn.dataset.act;
+      const i = Number(btn.dataset.i);
+      if (act === 'ren-member') { memberEditing = i; renderMemberEditor(); }
+      else if (act === 'del-member') removeMember(i);
+    });
+    list.addEventListener('keydown', (ev) => {
+      if (ev.target.id !== 'm-member-edit') return;
+      if (ev.key === 'Enter') { ev.preventDefault(); commitMemberRename(ev.target.value); }
+      else if (ev.key === 'Escape') { memberEditing = -1; renderMemberEditor(); }
+    });
+    list.addEventListener('focusout', (ev) => {
+      if (ev.target.id === 'm-member-edit') commitMemberRename(ev.target.value);
+    });
+  }
+
+  const presetWrap = $('#m-member-presets');
+  if (presetWrap) {
+    presetWrap.addEventListener('click', (ev) => {
+      const btn = ev.target.closest('[data-act="add-preset"]');
+      if (btn) addMember(btn.dataset.name);
+    });
+  }
+
+  const input = $('#m-member-input');
+  const btnAdd = $('#btn-add-member');
+  const commitInput = () => { if (addMember(input.value)) input.value = ''; };
+  if (input) {
+    input.addEventListener('keydown', (ev) => {
+      if (ev.key === 'Enter') { ev.preventDefault(); commitInput(); }
+    });
+  }
+  if (btnAdd) btnAdd.addEventListener('click', commitInput);
 }
 
 // ===== 费用分摊渲染 =====
@@ -297,7 +440,7 @@ function renderExpenses() {
   const daysWrap = $('#expDays');
   if (!summary || !daysWrap) return;
   const expenses = state.expenses || [];
-  const members = (state.meta.members || []).filter(m => String(m).trim());
+  const members = tripMembers();
 
   // 汇总
   const total = expenses.reduce((s, e) => s + (Number(e.amount) || 0), 0);
@@ -317,7 +460,9 @@ function renderExpenses() {
   const creditors = members.filter(m => net[m] > 0.005).sort((a, b) => net[b] - net[a]);
 
   let settleHTML;
-  if (!expenses.length) {
+  if (!members.length) {
+    settleHTML = '<span class="zero">还没添加同行成员，先在页脚「✏️ 行程信息」里加上，才能算谁该给谁钱</span>';
+  } else if (!expenses.length) {
     settleHTML = '<span class="zero">还没有记录费用</span>';
   } else if (!debtors.length && !creditors.length) {
     settleHTML = '<span class="zero">✓ 已平摊，无需转账</span>';
@@ -332,12 +477,23 @@ function renderExpenses() {
     }).join('　');
   }
 
+  // 垫付人不在成员名单里（早年填成「2人」这种、或成员被移除后没跟着改）：
+  // 这笔钱不进任何人的净额，加减就不为 0，必须显式说出来，不能装作平了。
+  const orphanMap = {};
+  expenses.forEach(e => {
+    if (e.payer && !members.includes(e.payer)) orphanMap[e.payer] = (orphanMap[e.payer] || 0) + 1;
+  });
+  const orphanNames = Object.keys(orphanMap);
+  const orphanHTML = orphanNames.length
+    ? `<div class="exp-warn">⚠️ 有 ${orphanNames.reduce((s, k) => s + orphanMap[k], 0)} 笔费用的垫付人「${orphanNames.map(escapeHtml).join('、')}」已不在成员名单里，点这几条重选一下垫付人才能算平</div>`
+    : '';
+
   summary.innerHTML = `
     <div class="exp-summary-top">
       <div class="exp-total"><div class="lbl">总支出</div><div class="num">¥${total.toFixed(2)}</div></div>
       <div class="exp-avg"><div class="lbl">人均 · ${members.length} 人</div><div class="num">¥${avg.toFixed(2)}</div></div>
     </div>
-    <div class="exp-settle"><span>结算</span>${settleHTML}</div>`;
+    <div class="exp-settle"><span>结算</span>${settleHTML}</div>${orphanHTML}`;
 
   if (!expenses.length) {
     daysWrap.innerHTML = '<div class="exp-empty">点下方「＋ 记一笔」开始记录酒店、打车、吃饭等费用</div>';
@@ -370,15 +526,20 @@ function renderExpenses() {
 
 function expItemHTML(e, idx) {
   const amt = Number(e.amount) || 0;
-  const members = (state.meta.members || []).filter(m => String(m).trim());
+  const members = tripMembers();
   const parts = (e.participants && e.participants.length) ? e.participants : members;
   const per = parts.length ? amt / parts.length : amt;
   const cat = e.category || '其他';
+  // 「谁掏的钱」是这一行最该看清的东西，所以单独标出来；对不上名单的要显眼
+  const orphan = e.payer && !members.includes(e.payer);
+  const who = e.payer
+    ? `<span class="who${orphan ? ' miss' : ''}">${escapeHtml(e.payer)}</span> 垫付`
+    : '<span class="who miss">未填垫付人</span>';
   return `<div class="exp-item" data-act="edit-exp" data-idx="${idx}">
     <span class="exp-cat exp-cat-${escapeHtml(cat)}">${escapeHtml(cat)}</span>
     <div class="exp-main">
       <div class="t">${escapeHtml(e.title || '未命名')}</div>
-      <div class="s">${escapeHtml(e.payer || '')}垫付 · ${parts.length}人分摊</div>
+      <div class="s">${who} · ${parts.length} 人分摊</div>
     </div>
     <div class="exp-amt">
       <div class="a">¥${amt.toFixed(2)}</div>
@@ -802,7 +963,12 @@ function openMetaModal() {
   $('#m-location').value = state.meta.location || '';
   $('#m-start').value = state.meta.startDate || '';
   $('#m-end').value = state.meta.endDate || '';
-  $('#m-members').value = (state.meta.members || []).join(', ');
+  memberDraft = tripMembers();
+  memberOps = [];
+  memberEditing = -1;
+  const memberInput = $('#m-member-input');
+  if (memberInput) memberInput.value = '';
+  renderMemberEditor();
   $('#m-remind').value = state.meta.remind || '';
   $('#m-footer').value = state.meta.footer || '';
   $('#meta-mask').classList.add('show');
@@ -816,14 +982,26 @@ function saveMeta() {
   state.meta.location = $('#m-location').value.trim();
   state.meta.startDate = start;
   state.meta.endDate = end;
-  state.meta.members = $('#m-members').value.split(/[,，、]/).map(s => s.trim()).filter(Boolean);
+  // 输入框里还没点「添加」的名字也别丢
+  const pendingMember = $('#m-member-input');
+  const pendingVal = pendingMember ? pendingMember.value.trim() : '';
+  if (pendingVal && !memberDraft.includes(pendingVal)) {
+    memberDraft.push(pendingVal.slice(0, 12));
+  }
+  applyMemberOps();
   state.meta.remind = $('#m-remind').value.trim();
   state.meta.footer = $('#m-footer').value.trim();
   state.days.forEach((day, i) => { day.date = addDays(start, i); });
   commit();
   closeMetaModal();
 }
-function closeMetaModal() { $('#meta-mask').classList.remove('show'); }
+function closeMetaModal() {
+  $('#meta-mask').classList.remove('show');
+  memberOps = [];              // 没点「保存」就关掉 → 本次成员改动一并放弃
+  memberEditing = -1;
+  const inp = $('#m-member-input');
+  if (inp) inp.value = '';
+}
 
 // ===== 天弹窗 =====
 let editingDay = -1;
@@ -1603,20 +1781,34 @@ function closeItemModal() {
 // ===== 费用弹窗 =====
 let editingExp = null; // null=关闭, -1=新增, >=0=编辑
 
-function fillExpSelects() {
-  const members = (state.meta.members || []).filter(m => String(m).trim());
-  $('#e-payer').innerHTML = members.map(m => `<option value="${escapeHtml(m)}">${escapeHtml(m)}</option>`).join('');
+function fillExpSelects(payerExtra) {
+  const members = tripMembers();
+  const list = members.slice();
+  // 早年把垫付人填成了「2人」这种，或者成员改名后没跟着改 —— 名字还在这笔费用上，
+  // 就得让它出现在下拉里（带标注），否则打开就变成「未选」，一保存反而把原来的值抹掉。
+  if (payerExtra && !list.includes(payerExtra)) list.unshift(payerExtra);
+  const sel = $('#e-payer');
+  sel.innerHTML = list.map(m => {
+    const miss = !members.includes(m);
+    return `<option value="${escapeHtml(m)}">${escapeHtml(m)}${miss ? '（已不在成员里）' : ''}</option>`;
+  }).join('');
+  sel.disabled = !list.length;
+  const emptyTip = $('#e-mem-empty');
+  if (emptyTip) emptyTip.hidden = !!members.length;
   $('#e-category').innerHTML = EXP_CATS.map(c => `<option>${c}</option>`).join('');
 }
 
 function renderPartCheck(selected) {
-  const members = (state.meta.members || []).filter(m => String(m).trim());
-  const sel = (selected && selected.length) ? selected : members;
+  const members = tripMembers();
+  // 分摊人里如果残留了已不在名单上的名字，视作那个人已退出，不再参与分摊
+  const sel = (selected && selected.length)
+    ? selected.map(s => String(s).trim()).filter(s => members.includes(s))
+    : members;
   const wrap = $('#e-participants');
-  wrap.innerHTML = members.map(m => `
+  wrap.innerHTML = members.length ? members.map(m => `
     <label class="${sel.includes(m) ? 'on' : ''}" data-m="${escapeHtml(m)}">
       <input type="checkbox" ${sel.includes(m) ? 'checked' : ''} /> ${escapeHtml(m)}
-    </label>`).join('');
+    </label>`).join('') : '<span class="mem-empty">先去页脚「✏️ 行程信息」添加同行成员</span>';
   wrap.querySelectorAll('label').forEach(lb => {
     lb.addEventListener('click', () => {
       const cb = lb.querySelector('input');
@@ -1628,16 +1820,16 @@ function renderPartCheck(selected) {
 
 function openExpModal(idx) {
   editingExp = idx;
-  fillExpSelects();
   const e = idx >= 0 ? state.expenses[idx] : null;
-  const members = (state.meta.members || []).filter(m => String(m).trim());
+  const members = tripMembers();
+  fillExpSelects(e ? e.payer : null);
   $('#exp-modal-title').textContent = e ? '编辑费用' : '记一笔';
   $('#e-title').value = e ? (e.title || '') : '';
   $('#e-amount').value = e ? (e.amount ?? '') : '';
   updateAmountHint();
   $('#e-category').value = e ? (e.category || '交通') : '交通';
   $('#e-date').value = e ? (e.date || '') : '';
-  $('#e-payer').value = e ? (e.payer || members[0] || '') : (members[0] || '');
+  $('#e-payer').value = (e && e.payer) ? e.payer : (members[0] || '');
   $('#e-note').value = e ? (e.note || '') : '';
   renderPartCheck(e ? e.participants : null);
   $('#btn-del-exp').style.display = e ? '' : 'none';
@@ -1787,7 +1979,7 @@ function applyCalcResult() {
 }
 
 function saveExp() {
-  const members = (state.meta.members || []).filter(m => String(m).trim());
+  const members = tripMembers();
   const selected = [...document.querySelectorAll('#e-participants label.on')].map(l => l.dataset.m);
   const evaluated = evalExpr($('#e-amount').value);
   if (!isFinite(evaluated)) { toast('金额算式无法计算，请检查'); return; }
@@ -1908,6 +2100,7 @@ function bindEvents() {
 
   $('#btn-save-meta').addEventListener('click', saveMeta);
   $('#meta-close').addEventListener('click', closeMetaModal);
+  bindMemberEditor();
   $('#btn-save-day').addEventListener('click', saveDay);
   $('#day-close').addEventListener('click', closeDayModal);
   $('#btn-del-day').addEventListener('click', deleteDay);
@@ -1954,7 +2147,7 @@ function bindEvents() {
     $(sel).addEventListener('click', (e) => { if (e.target === e.currentTarget) fn(); });
   });
 
-  ['#m-title', '#m-subtitle', '#m-location', '#m-members', '#m-remind', '#m-footer'].forEach(sel => {
+  ['#m-title', '#m-subtitle', '#m-location', '#m-remind', '#m-footer'].forEach(sel => {
     $(sel).addEventListener('keydown', (e) => { if (e.key === 'Enter') saveMeta(); });
   });
   $('#d-stay').addEventListener('keydown', (e) => { if (e.key === 'Enter') saveDay(); });
