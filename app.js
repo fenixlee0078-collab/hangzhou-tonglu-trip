@@ -33,7 +33,7 @@ const ITEM_TYPES = [
 // 固定类型的时间规则；other 不在这里，它看 item.timeOn（弹窗里的勾选）
 const TYPE_NEEDS_TIME = { trip: true, play: false, food: false };
 // 判定顺序有讲究：先看「高铁」这种明确的交通词，再让「晚饭」这类餐饮词兜底。
-// 否则「高铁 · 厦门 → 福州」会被当成餐饮。
+// 否则「高铁 · 桐庐 → 杭州东」会被当成餐饮。
 const TRIP_RE = /高铁|火车|动车|航班|飞机|机场|车站|大巴|客车|自驾|打车|出发|返程|接驳|摆渡|检票|登机/;
 // 餐饮词刻意不写「店」「馆」这种单字：酒店、体育馆、博物馆全都带，会大面积误判。
 // 只保留明确的「吃饭动作 + 餐馆通名」，另外配合下面的住宿/场馆排除提升准确度。
@@ -427,7 +427,7 @@ function transformLng(x, y) {
   return ret;
 }
 
-// 名称归一化：去空格/分隔符，保留括号内容（括号里常含有效地名线索，如「某酒店（市中心广场店）」）
+// 名称归一化：去空格/分隔符，保留括号内容（括号里常含有效地名线索，如「四季华桐酒店（桐庐市中心广场店）」）
 function normalizePlaceName(s) {
   return String(s || '')
     .replace(/[\s·•・]/g, '')
@@ -452,7 +452,7 @@ function lookupPlaceCoord(name) {
   const candidates = [normalizePlaceName(name)];
   const loose = normalizePlaceNameLoose(name);
   if (loose && loose !== candidates[0]) candidates.push(loose);
-  // 变体：去「市/县/区」等行政字（「厦门市中心广场」→「厦门中心广场」）
+  // 变体：去「市/县/区」等行政字（「桐庐市中心广场」→「桐庐中心广场」）
   for (const c of [...candidates]) {
     const v = c.replace(/(市|县|区)(?=[^市县区]*$)/, '');
     if (v && v !== c) candidates.push(v);
@@ -463,7 +463,7 @@ function lookupPlaceCoord(name) {
     const hit = PLACE_KEYS_NORM.find(p => p.norm === c || p.loose === c);
     if (hit) return PLACE_COORDS[hit.key];
   }
-  // 2. 最长包含匹配（避免「厦门站」被短键抢走）
+  // 2. 最长包含匹配（避免「桐庐站」被短键抢走）
   let best = null, bestLen = 0;
   for (const c of candidates) {
     for (const p of PLACE_KEYS_NORM) {
@@ -638,7 +638,7 @@ function openGoogleMaps(name) {
 }
 function openDianping(name) {
   // 用城市名限定搜索范围，避免搜到外地同名店；
-  // 地点名本身已含城市名时不再加，否则会变成「厦门厦门站」这种重复词。
+  // 地点名本身已含城市名时不再加，否则会变成「桐庐桐庐站」这种重复词。
   const cityName = tripConfig.cityName || '';
   const raw = String(name || '').trim();
   const kw = encodeURIComponent(cityName && !raw.includes(cityName) ? cityName + raw : raw);
@@ -834,7 +834,66 @@ function openDayModal(di) {
   // 主题 / 副标题 / 标签已下线，这里只维护「住宿」和「日期」
   $('#d-stay').value = day.stay || '';
   $('#d-date').value = day.date || '';
+  fillStayRange();
   $('#day-mask').classList.add('show');
+}
+
+// ===== 住宿：一次铺满一段 =====
+// 连住同一家酒店时一天一天重复填很容易漏掉某天；这里选个起止天，一次写进这段的每一天。
+// 只改 day.stay，不动数据结构 —— 老行程的数据、云端同步、导出都不受影响。
+
+// 两个下拉列出本行程所有天（带日期和星期，避免选错）
+function fillStayRange() {
+  const from = $('#d-stay-from'), to = $('#d-stay-to');
+  if (!from || !to) return;
+  const opts = state.days.map((d, i) =>
+    `<option value="${i}">D${i + 1} · ${escapeHtml(dateWithWeek(d.date))}</option>`).join('');
+  from.innerHTML = opts;
+  to.innerHTML = opts;
+  const cur = String(Math.max(0, editingDay));
+  from.value = cur;
+  to.value = cur;
+  fillStayDatalist();
+  updateStayHint();
+}
+
+// 把行程里填过的住宿名做成候选项：同一家酒店住第二段时直接选，不用重打
+function fillStayDatalist() {
+  const dl = $('#stay-list');
+  if (!dl) return;
+  const names = [...new Set(state.days.map(d => (d.stay || '').trim()).filter(Boolean))];
+  dl.innerHTML = names.map(n => `<option value="${escapeHtml(n)}"></option>`).join('');
+}
+
+// 实时说明「这一步会写哪几天」，不让用户稀里糊涂改掉一堆数据
+function updateStayHint() {
+  const hint = $('#stay-range-hint');
+  if (!hint) return;
+  const a = parseInt($('#d-stay-from').value, 10);
+  const b = parseInt($('#d-stay-to').value, 10);
+  if (isNaN(a) || isNaN(b)) { hint.classList.remove('show'); return; }
+  const lo = Math.min(a, b), hi = Math.max(a, b);
+  const n = hi - lo + 1;
+  const name = $('#d-stay').value.trim();
+  hint.textContent = n === 1
+    ? `只会填 D${lo + 1} 这天`
+    : `会把「${name || '这个住宿'}」填到 D${lo + 1}—D${hi + 1}，共 ${n} 天`;
+  hint.classList.add('show');
+}
+
+function applyStayRange() {
+  if (editingDay < 0) return;
+  const name = $('#d-stay').value.trim();
+  if (!name) { toast('先在上面填住宿的名字'); return; }
+  const a = parseInt($('#d-stay-from').value, 10);
+  const b = parseInt($('#d-stay-to').value, 10);
+  if (isNaN(a) || isNaN(b)) return;
+  // 起止选反了也照填（用户按 D3→D1 选，本意就是这段）
+  const lo = Math.min(a, b), hi = Math.max(a, b);
+  for (let i = lo; i <= hi; i++) if (state.days[i]) state.days[i].stay = name;
+  commit();
+  closeDayModal();
+  toast(`已把「${name}」填到 D${lo + 1}—D${hi + 1}（${hi - lo + 1} 天）`);
 }
 function saveDay() {
   if (editingDay < 0) return;
@@ -1874,6 +1933,12 @@ function bindEvents() {
   ['#d-stay', '#d-date'].forEach(sel => {
     $(sel).addEventListener('keydown', (e) => { if (e.key === 'Enter') saveDay(); });
   });
+  // 住宿范围：改选择或改名字只刷新提示，点「铺满这段」才真正写数据
+  ['#d-stay-from', '#d-stay-to'].forEach(sel => {
+    $(sel).addEventListener('change', updateStayHint);
+  });
+  $('#d-stay').addEventListener('input', updateStayHint);
+  $('#btn-apply-stay').addEventListener('click', applyStayRange);
   $('#f-title').addEventListener('keydown', (e) => { if (e.key === 'Enter') saveItem(); });
 
   // ===== 地点搜索面板交互 =====
