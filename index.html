@@ -9,7 +9,7 @@
   <meta name="referrer" content="no-referrer-when-downgrade" />
   <title>杭州桐庐 3天2夜</title>
   <link rel="stylesheet" href="theme.css?v=2" />
-  <link rel="stylesheet" href="style.css?v=5" />
+  <link rel="stylesheet" href="style.css?v=6" />
 </head>
 <body>
 
@@ -142,11 +142,10 @@
           <datalist id="stay-list"></datalist>
         </div>
         <div class="field-row">
-          <label>住这几天 <span class="lbl-hint">终点选退房日，退房当天不填</span></label>
+          <label>住这几天 <span class="lbl-hint">选退房那天，中间每天自动填上</span></label>
           <div class="stay-range">
-            <select id="d-stay-from"></select>
-            <span class="sr-sep">→</span>
-            <select id="d-stay-to"></select>
+            <span class="sr-group"><span class="sr-tag">入住</span><select id="d-stay-from"></select></span>
+            <span class="sr-group"><span class="sr-tag">退房</span><select id="d-stay-to"></select></span>
             <button type="button" class="mini" id="btn-apply-stay">铺满这段</button>
           </div>
           <div class="calc-hint" id="stay-range-hint"></div>
@@ -382,6 +381,6 @@
        顺序要紧：site-config.js（站点配置）→ static-bridge.js（先定义 io/fetch 替身）→ app.js -->
   <script src="site-config.js?v=2"></script>
   <script src="static-bridge.js?v=6"></script>
-  <script src="app.js?v=5"></script>
+  <script src="app.js?v=6"></script>
 </body>
 </html>
