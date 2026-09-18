@@ -1,0 +1,33 @@
+/* 主题：forest（由 create_trip.py 自动生成） */
+:root{
+  --ink:#1C2A22;
+  --ink2:#4C5C52;
+  --ink3:#8A9791;
+  --paper:#F6F3EC;
+  --card:#FFFFFF;
+  --line:#E3DDD0;
+  --forest:#1E3A2F;
+  --forest2:#2F5D48;
+  --moss:#6E8F76;
+  --clay:#B4795A;
+  --sun:#D9A24A;
+  --fog:#EEF1EB;
+  --shadow:0 2px 4px rgba(20,30,24,.04), 0 12px 28px rgba(20,30,24,.08);
+
+  --hero-grad:linear-gradient(160deg,#0E1F17 0%,#1B3629 45%,#2B5642 100%);
+  --hero-text:#F2F0E6;
+  --hero-sub:#CBD9CE;
+  --glow-rgb:217,162,74;
+  --fog-rgb:11,24,18;
+
+  --next-grad:linear-gradient(135deg,#16301F 0%,#234639 52%,#2F5D48 100%);
+  --next-sub:#B7CABD;
+  --next-label:#9CB3A4;
+  --next-num:#CBDFD1;
+
+  --hill-sun:#D9A24A;
+  --hill1:#2F5D48;
+  --hill2:#24422F;
+  --hill3:#16281F;
+  --hill4:#0F1E17;
+}
