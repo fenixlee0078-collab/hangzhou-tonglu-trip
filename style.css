@@ -640,10 +640,6 @@ button{font:inherit;cursor:pointer;border:0;background:none;color:inherit}
 
 .exp-empty{font-size:13.5px;color:var(--ink3);padding:18px 6px;text-align:center}
 
-.exp-day{margin-bottom:14px}
-.exp-day-head{display:flex;align-items:center;justify-content:space-between;padding:0 4px 8px;font-size:13px}
-.exp-day-head b{color:var(--forest);font-size:14px;font-weight:700}
-.exp-day-sub{color:var(--ink3);font-size:12px}
 .exp-list{display:flex;flex-direction:column;gap:8px}
 .exp-item{
   display:flex;align-items:center;gap:12px;background:var(--card);
