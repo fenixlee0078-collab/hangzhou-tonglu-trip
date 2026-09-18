@@ -1,0 +1,370 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <!-- 显式指定 referrer 策略：浏览器默认的 strict-origin-when-cross-origin 跨域时只发域名
+       （https://xxx.github.io/），而谷歌 Key 的「网站限制」是按路径前缀匹配的，
+       发全路径（https://xxx.github.io/<仓库名>/）才能稳稳命中 https://xxx.github.io/* -->
+  <meta name="referrer" content="no-referrer-when-downgrade" />
+  <title>杭州桐庐 3天2夜</title>
+  <link rel="stylesheet" href="theme.css?v=2" />
+  <link rel="stylesheet" href="style.css?v=4" />
+</head>
+<body>
+
+  <div id="tip"></div>
+
+  <main id="doc">
+
+    <!-- ============ 封面 ============ -->
+    <header class="hero wrap" id="hero">
+      <div class="hero-media">
+        <svg aria-hidden="true" class="hills" preserveAspectRatio="none" viewBox="0 0 1440 420">
+          <circle cx="1180" cy="86" fill="var(--hill-sun)" opacity=".16" r="150"/>
+          <path d="M0,300 L120,246 L212,288 L332,196 L432,252 L562,166 L682,238 L802,182 L922,248 L1052,192 L1182,262 L1302,212 L1440,272 L1440,420 L0,420 Z" fill="var(--hill1)" opacity=".45"/>
+          <path d="M0,340 L142,298 L262,338 L382,268 L522,328 L652,262 L792,328 L932,272 L1082,332 L1222,288 L1352,338 L1440,318 L1440,420 L0,420 Z" fill="var(--hill2)" opacity=".78"/>
+          <path d="M0,376 L160,350 L300,378 L460,340 L620,375 L780,345 L950,378 L1120,350 L1290,380 L1440,360 L1440,420 L0,420 Z" fill="var(--hill3)"/>
+          <g fill="var(--hill4)" opacity=".92">
+            <path d="M92,420 L108,362 L124,420 Z"/><path d="M196,420 L215,346 L234,420 Z"/>
+            <path d="M336,420 L350,372 L364,420 Z"/><path d="M524,420 L545,340 L566,420 Z"/>
+            <path d="M694,420 L708,376 L722,420 Z"/><path d="M878,420 L898,348 L918,420 Z"/>
+            <path d="M1046,420 L1060,374 L1074,420 Z"/><path d="M1214,420 L1234,342 L1254,420 Z"/>
+            <path d="M1372,420 L1386,378 L1400,420 Z"/>
+          </g>
+        </svg>
+        <div class="fog"></div>
+        <div class="glow"></div>
+      </div>
+      <div class="hero-inner">
+        <div class="eyebrow" id="eyebrow">TRAVEL · PLAN 2026</div>
+        <!-- 首屏文本由 create_trip.py 按目的地填好（fill_index_html），
+             随后会被 data.json 覆盖；模板留中性占位避免首屏闪空白。 -->
+        <h1 id="heroTitle">杭州桐庐</h1>
+        <div class="sub" id="heroSub">3天2夜</div>
+        <div class="meta">
+          <span class="chip">📅 <b id="heroDate">9.26 — 9.28</b></span>
+          <span class="chip">📍 <b id="heroLoc">国内 · 杭州桐庐</b></span>
+        </div>
+      </div>
+    </header>
+
+    <!-- ============ 下一项提醒 ============ -->
+    <section class="wrap nextsec" id="nextsec">
+      <div class="next-card" id="nextCard">
+        <div class="next-main">
+          <div class="next-eyebrow"><span class="dot"></span><span id="nextLabel">下一项</span></div>
+          <div class="next-title" id="nextTitle">正在读取行程…</div>
+          <div class="next-meta" id="nextMeta">按行程里的日期和时间自动计算</div>
+        </div>
+        <div class="next-count">
+          <div class="next-count-label" id="nextCountLabel">还有</div>
+          <div class="next-count-num" id="nextCountNum">--</div>
+        </div>
+      </div>
+      <div class="next-note" id="remind" title="点击编辑提醒">⏰ 出发前提醒：<span id="remindText"></span></div>
+    </section>
+
+    <!-- ============ 行程安排 ============ -->
+    <section class="wrap sec" id="itinerary">
+      <div class="sec-head">
+        <h2>行程安排</h2>
+        <span class="en">Itinerary</span>
+        <span class="tip-inline">点击导航 · 长按编辑</span>
+      </div>
+      <div class="timeline" id="tl"></div>
+      <button class="addbtn block" id="btn-add-day">＋ 添加一天</button>
+    </section>
+
+    <!-- ============ 费用分摊 ============ -->
+    <section class="wrap sec" id="expenseSec">
+      <div class="sec-head">
+        <h2>费用分摊</h2>
+        <span class="en">Split</span>
+        <span class="tip-inline">点击条目可编辑</span>
+      </div>
+      <div class="exp-summary" id="expSummary"></div>
+      <div class="exp-days" id="expDays"></div>
+      <button class="addbtn block" id="btn-add-exp">＋ 记一笔</button>
+    </section>
+
+    <footer class="wrap foot" id="foot">
+      <div class="mark" id="footerMark">下一站 · 杭州桐庐</div>
+      <div>同行：<span id="footerMembers"></span> · <span id="footStamp">2026.09</span></div>
+      <div class="foot-links">
+        <button class="foot-link" id="btn-meta">✏️ 行程信息</button>
+        <button class="foot-link" id="btn-name">👤 我的昵称</button>
+        <button class="foot-link" id="btn-share">🔗 分享给朋友</button>
+        <button class="foot-link" id="btn-cloud">☁️ 云端同步</button>
+      </div>
+      <div class="foot-presence">
+        <span class="presence-dot" id="presence-dot"></span>
+        <span id="presence-text">连接中…</span>
+      </div>
+    </footer>
+
+  </main>
+
+  <!-- ============ 元信息弹窗 ============ -->
+  <div class="modal-mask" id="meta-mask">
+    <div class="modal">
+      <div class="modal-head"><h3>编辑行程信息</h3><button class="modal-close" id="meta-close">✕</button></div>
+      <div class="modal-body">
+        <div class="field-row"><label>眉题（封面小字）</label><input id="m-eyebrow" type="text" /></div>
+        <div class="field-row"><label>大标题</label><input id="m-title" type="text" /></div>
+        <div class="field-row"><label>副标题</label><input id="m-subtitle" type="text" /></div>
+        <div class="field-row"><label>地点</label><input id="m-location" type="text" /></div>
+        <div class="field-row"><label>日期</label>
+          <div class="half">
+            <input id="m-start" type="date" />
+            <input id="m-end" type="date" />
+          </div>
+        </div>
+        <div class="field-row"><label>参与人（逗号分隔）</label><input id="m-members" type="text" placeholder="我, 朋友" /></div>
+        <div class="field-row"><label>出发前提醒</label><input id="m-remind" type="text" placeholder="身份证、充电宝、雨具…" /></div>
+        <div class="field-row"><label>页脚标语</label><input id="m-footer" type="text" /></div>
+      </div>
+      <div class="modal-foot"><button class="btn-primary" id="btn-save-meta">保存</button></div>
+    </div>
+  </div>
+
+  <!-- ============ 天弹窗 ============ -->
+  <div class="modal-mask" id="day-mask">
+    <div class="modal">
+      <div class="modal-head"><h3 id="day-modal-title">编辑这一天</h3><button class="modal-close" id="day-close">✕</button></div>
+      <div class="modal-body">
+        <div class="field-row"><label>住宿</label><input id="d-stay" type="text" placeholder="如：芦茨村 · 民宿" /></div>
+        <div class="field-row"><label>日期</label><input id="d-date" type="date" /></div>
+      </div>
+      <div class="modal-foot">
+        <button class="mini warn" id="btn-del-day">🗑 删除这天</button>
+        <button class="btn-primary" id="btn-save-day">保存</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ 行程项弹窗 ============ -->
+  <div class="modal-mask" id="item-mask">
+    <div class="modal">
+      <div class="modal-head"><h3 id="item-modal-title">编辑安排</h3><button class="modal-close" id="item-close">✕</button></div>
+      <div class="modal-body">
+        <div class="field-row">
+          <label>类型</label>
+          <div class="type-pick" id="f-type">
+            <button type="button" class="type-opt" data-type="play">🎡 游玩</button>
+            <button type="button" class="type-opt" data-type="trip">🚄 交通</button>
+            <button type="button" class="type-opt" data-type="food">🍽 餐饮</button>
+            <button type="button" class="type-opt" data-type="other">📌 其他</button>
+          </div>
+        </div>
+        <div class="field-row" id="f-timeon-row" hidden>
+          <label class="checkbox-label"><input id="f-timeon" type="checkbox" /> 这条需要填写时间</label>
+        </div>
+        <div class="field-row" id="f-time-row"><label>时间</label><input id="f-time" type="time" /></div>
+        <div class="field-row"><label>安排内容</label><input id="f-title" type="text" placeholder="新的安排，比如：逛夜市 / 去瑶琳仙境" /></div>
+        <div class="field-row">
+          <label>地点（用于导航）</label>
+          <button type="button" class="place-field" id="btn-open-place">
+            <span class="pf-ico">📍</span>
+            <span class="pf-text" id="pf-text">点这里搜索地点</span>
+            <span class="pf-clear" id="btn-place-clear" hidden>✕</span>
+            <span class="pf-arrow">›</span>
+          </button>
+        </div>
+        <div class="field-row">
+          <div class="coord-row">
+            <span id="f-coord-state" class="coord-state">未定位</span>
+          </div>
+        </div>
+        <!-- 子地点：父地点（如「暹罗天地」）下面挂的具体店铺（如「斑斓卷椰子蛋卷」）。
+             每个子地点独立定位、独立导航，还能各写一条自己的备注；
+             父地点留空时不允许添加。 -->
+        <div class="field-row" id="f-subs-row">
+          <label>子地点 <span class="lbl-hint">同一地点里的具体店 / 点位，可各加备注</span></label>
+          <div class="sub-list" id="f-subs"></div>
+          <button type="button" class="sub-add" id="btn-add-sub">＋ 添加子地点</button>
+        </div>
+        <div class="field-row"><label>备注</label><textarea id="f-note" placeholder="补充说明…"></textarea></div>
+        <div class="field-row">
+          <label class="checkbox-label"><input id="f-food" type="checkbox" /> 这是吃饭的饭店（点击时提供大众点评 / 高德双选）</label>
+        </div>
+      </div>
+      <div class="modal-foot">
+        <button class="mini warn" id="btn-del-item">🗑 删除</button>
+        <button class="btn-primary" id="btn-save-item">保存</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ 昵称弹窗 ============ -->
+  <div class="modal-mask" id="name-mask">
+    <div class="modal modal-sm">
+      <div class="modal-head"><h3>设置我的昵称</h3><button class="modal-close" id="name-close">✕</button></div>
+      <div class="modal-body">
+        <p class="muted">对方会看到「谁正在一起浏览 / 编辑」。</p>
+        <div class="field-row"><input id="n-name" type="text" placeholder="输入昵称" maxlength="20" /></div>
+      </div>
+      <div class="modal-foot"><button class="btn-primary" id="btn-save-name">保存</button></div>
+    </div>
+  </div>
+
+  <!-- ============ 分享弹窗 ============ -->
+  <div class="modal-mask" id="share-mask">
+    <div class="modal modal-sm">
+      <div class="modal-head"><h3>分享给朋友</h3><button class="modal-close" id="share-close">✕</button></div>
+      <div class="modal-body">
+        <p class="muted">把当前链接发给朋友，双方打开同一个链接即可同步编辑。</p>
+        <div class="field-row">
+          <input id="share-url" type="text" readonly />
+        </div>
+        <button class="btn-primary btn-block" id="btn-copy">📋 复制链接</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ 导航选择弹窗（餐饮地点） ============ -->
+  <div class="modal-mask" id="nav-mask">
+    <div class="modal modal-sm">
+      <div class="modal-head"><h3>前往<span id="nav-name"></span></h3><button class="modal-close" id="nav-close">✕</button></div>
+      <div class="modal-body">
+        <p class="muted">这是一个吃饭的地点，选择打开方式：</p>
+        <div class="nav-options">
+          <button class="nav-opt" id="nav-amap">
+            <span class="nav-ico">🗺️</span>
+            <span class="nav-txt"><b>高德地图</b><small>导航到店</small></span>
+          </button>
+          <button class="nav-opt" id="nav-dianping">
+            <span class="nav-ico">⭐</span>
+            <span class="nav-txt"><b>大众点评</b><small>看评价 / 找优惠</small></span>
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ 点评引导弹窗（微信内无法唤起 App 时） ============ -->
+  <div class="modal-mask" id="dp-guide-mask">
+    <div class="modal modal-sm">
+      <div class="modal-head"><h3>前往<span id="guide-app-name"></span></h3><button class="modal-close" id="dp-guide-close">✕</button></div>
+      <div class="modal-body">
+        <p class="muted">微信 / 企业微信内无法直接唤起大众点评 App（平台限制）。任选一种方式：</p>
+        <div class="guide-steps">
+          <div class="guide-step"><b>方式一</b><span>点右上角「···」→「在浏览器打开」，回到页面后再点饭店地点即可唤起 App</span></div>
+          <div class="guide-step"><b>方式二</b><span>复制下方链接，粘贴到系统浏览器打开</span></div>
+        </div>
+        <div class="field-row">
+          <input id="dp-url" type="text" readonly />
+        </div>
+        <button class="btn-primary btn-block" id="btn-copy-dp">📋 复制搜索链接</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ 费用弹窗 ============ -->
+  <div class="modal-mask" id="exp-mask">
+    <div class="modal">
+      <div class="modal-head"><h3 id="exp-modal-title">记一笔</h3><button class="modal-close" id="exp-close">✕</button></div>
+      <div class="modal-body">
+        <div class="field-row"><label>名称</label><input id="e-title" type="text" placeholder="如：高铁票 / 汉庭住宿 / 打车" /></div>
+        <div class="field-row">
+          <label>金额与分类</label>
+          <div class="half">
+            <input id="e-amount" type="text" inputmode="text" placeholder="金额或算式：128+35.5×2" />
+            <select id="e-category"></select>
+          </div>
+          <div id="e-amount-calc" class="calc-hint"></div>
+          <div id="calc-panel" class="calc-panel">
+            <div class="calc-bar">
+              <span class="calc-tag">计算器</span>
+              <button type="button" class="calc-collapse" id="calc-collapse">收起 ⌃</button>
+            </div>
+            <div class="calc-screen">
+              <div class="calc-expr" id="calc-expr">0</div>
+              <div class="calc-res" id="calc-res"></div>
+            </div>
+            <div class="calc-keys" id="calc-keys">
+              <button type="button" class="ck fn" data-k="C">C</button>
+              <button type="button" class="ck fn" data-k="(">(</button>
+              <button type="button" class="ck fn" data-k=")">)</button>
+              <button type="button" class="ck op" data-k="÷">÷</button>
+
+              <button type="button" class="ck" data-k="7">7</button>
+              <button type="button" class="ck" data-k="8">8</button>
+              <button type="button" class="ck" data-k="9">9</button>
+              <button type="button" class="ck op" data-k="×">×</button>
+
+              <button type="button" class="ck" data-k="4">4</button>
+              <button type="button" class="ck" data-k="5">5</button>
+              <button type="button" class="ck" data-k="6">6</button>
+              <button type="button" class="ck op" data-k="-">−</button>
+
+              <button type="button" class="ck" data-k="1">1</button>
+              <button type="button" class="ck" data-k="2">2</button>
+              <button type="button" class="ck" data-k="3">3</button>
+              <button type="button" class="ck op" data-k="+">+</button>
+
+              <button type="button" class="ck" data-k="0">0</button>
+              <button type="button" class="ck" data-k=".">.</button>
+              <button type="button" class="ck fn" data-k="del">⌫</button>
+              <button type="button" class="ck eq" data-k="=">=</button>
+            </div>
+            <button type="button" class="calc-done" id="calc-done">用这个金额</button>
+          </div>
+        </div>
+        <div class="field-row"><label>日期</label><input id="e-date" type="date" /></div>
+        <div class="field-row"><label>垫付人</label><select id="e-payer"></select></div>
+        <div class="field-row"><label>参与分摊的人</label><div id="e-participants" class="part-check"></div></div>
+        <div class="field-row"><label>备注</label><input id="e-note" type="text" placeholder="可选" /></div>
+      </div>
+      <div class="modal-foot">
+        <button class="mini warn" id="btn-del-exp">🗑 删除</button>
+        <button class="btn-primary" id="btn-save-exp">保存</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ 云端同步设置（静态版新增） ============
+       静态页没有后端，行程数据改存在你自己的 GitHub 私有仓库里。
+       令牌只保存在本机浏览器（localStorage），不会写进页面代码。 -->
+  <div class="modal-mask" id="cloud-mask">
+    <div class="modal">
+      <div class="modal-head"><h3>云端同步设置</h3><button class="modal-close" id="cloud-close">✕</button></div>
+      <div class="modal-body">
+        <p class="muted">行程数据存在你自己的 GitHub 私有仓库，只有你知道。以下内容只保存在本机浏览器，不会上传到别处。</p>
+        <div class="field-row"><label>数据仓库</label><input id="c-repo" type="text" placeholder="用户名/仓库名" autocapitalize="off" autocomplete="off" spellcheck="false" /></div>
+        <div class="field-row"><label>访问令牌（只授权该仓库）</label><input id="c-token" type="password" placeholder="github_pat_..." autocapitalize="off" autocomplete="off" spellcheck="false" /></div>
+        <div class="field-row"><label>谷歌地图 Key（浏览器用）</label><input id="c-gkey" type="text" placeholder="AIza..." autocapitalize="off" autocomplete="off" spellcheck="false" /></div>
+        <div id="c-state" class="calc-hint"></div>
+      </div>
+      <div class="modal-foot"><button class="btn-primary" id="btn-save-cloud">保存并测试连接</button></div>
+    </div>
+  </div>
+
+  <!-- ============ 地点搜索面板（全屏） ============
+       为什么单独开一个面板：编辑弹窗是 fixed 定位，键盘弹起时被盖住的下半部分
+       永远够不着（页面滚动也没用），而改成顶部对齐又会让标题栏跑出屏幕。
+       把地址输入搬到这个独立面板里，搜索框固定在顶部，键盘只会压缩下方列表，
+       两件事互不干扰。 -->
+  <div class="place-panel" id="place-panel" hidden>
+    <div class="pp-head">
+      <button type="button" class="pp-back" id="pp-back" aria-label="返回">‹</button>
+      <div class="pp-search">
+        <span class="pp-ico">🔍</span>
+        <input id="pp-input" type="search" placeholder="搜索地点或地址" autocomplete="off" />
+        <button type="button" class="pp-clear" id="pp-clear" hidden aria-label="清空">✕</button>
+      </div>
+    </div>
+    <div class="pp-confirm" id="pp-confirm" hidden>
+      <div class="pp-confirm-txt" id="pp-confirm-txt"></div>
+      <button type="button" class="btn-primary pp-use" id="pp-use">使用此地点</button>
+    </div>
+    <div class="pp-list" id="pp-list"></div>
+  </div>
+
+  <!-- 静态版：没有 Node 后端，socket.io 由 static-bridge.js 提供的本地替身接管。
+       顺序要紧：site-config.js（站点配置）→ static-bridge.js（先定义 io/fetch 替身）→ app.js -->
+  <script src="site-config.js?v=1"></script>
+  <script src="static-bridge.js?v=6"></script>
+  <script src="app.js?v=3"></script>
+</body>
+</html>
