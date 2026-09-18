@@ -346,7 +346,8 @@
         <p class="muted">行程数据存在你自己的 GitHub 私有仓库，只有你知道。以下内容只保存在本机浏览器，不会上传到别处。</p>
         <div class="field-row"><label>数据仓库</label><input id="c-repo" type="text" placeholder="用户名/仓库名" autocapitalize="off" autocomplete="off" spellcheck="false" /></div>
         <div class="field-row"><label>访问令牌（只授权该仓库）</label><input id="c-token" type="password" placeholder="github_pat_..." autocapitalize="off" autocomplete="off" spellcheck="false" /></div>
-        <div class="field-row"><label>谷歌地图 Key（浏览器用）</label><input id="c-gkey" type="text" placeholder="AIza..." autocapitalize="off" autocomplete="off" spellcheck="false" /></div>
+        <div class="field-row" id="c-gkey-row"><label>谷歌地图 Key（海外搜索用）</label><input id="c-gkey" type="text" placeholder="AIza..." autocapitalize="off" autocomplete="off" spellcheck="false" /></div>
+        <div class="field-row" id="c-akey-row"><label>高德 Key（国内搜索用）</label><input id="c-akey" type="text" placeholder="32 位字符串" autocapitalize="off" autocomplete="off" spellcheck="false" /></div>
         <div id="c-state" class="calc-hint"></div>
       </div>
       <div class="modal-foot"><button class="btn-primary" id="btn-save-cloud">保存并测试连接</button></div>
@@ -376,8 +377,8 @@
 
   <!-- 静态版：没有 Node 后端，socket.io 由 static-bridge.js 提供的本地替身接管。
        顺序要紧：site-config.js（站点配置）→ static-bridge.js（先定义 io/fetch 替身）→ app.js -->
-  <script src="site-config.js?v=2"></script>
-  <script src="static-bridge.js?v=6"></script>
-  <script src="app.js?v=8"></script>
+  <script src="site-config.js?v=3"></script>
+  <script src="static-bridge.js?v=7"></script>
+  <script src="app.js?v=9"></script>
 </body>
 </html>
