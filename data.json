@@ -1,0 +1,42 @@
+{
+  "meta": {
+    "eyebrow": "TRAVEL · PLAN 2026",
+    "title": "杭州桐庐",
+    "subtitle": "3天2夜",
+    "location": "国内 · 杭州桐庐",
+    "startDate": "2026-09-26",
+    "endDate": "2026-09-28",
+    "members": [
+      "2人"
+    ],
+    "remind": "",
+    "footer": "下一站 · 杭州桐庐"
+  },
+  "days": [
+    {
+      "date": "2026-09-26",
+      "title": "第 1 天",
+      "sub": "",
+      "tags": [],
+      "stay": "",
+      "items": []
+    },
+    {
+      "date": "2026-09-27",
+      "title": "第 2 天",
+      "sub": "",
+      "tags": [],
+      "stay": "",
+      "items": []
+    },
+    {
+      "date": "2026-09-28",
+      "title": "第 3 天",
+      "sub": "",
+      "tags": [],
+      "stay": "",
+      "items": []
+    }
+  ],
+  "expenses": []
+}
