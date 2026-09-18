@@ -849,7 +849,11 @@ function fillStayRange() {
   const opts = state.days.map((d, i) =>
     `<option value="${i}">D${i + 1} · ${escapeHtml(dateWithWeek(d.date))}</option>`).join('');
   from.innerHTML = opts;
-  to.innerHTML = opts;
+  // 「退房」多一项「住满全程」：退房日往往是行程结束的次日（压根不在行程里），
+  // 短行程尤其明显 —— 不补这一项的话「整个行程都住同一家」根本选不出来
+  // （选到行程最后一天会被当成退房日，反而少填一天）。
+  to.innerHTML = opts +
+    `<option value="${state.days.length}">住满全程（${state.days.length} 天都住）</option>`;
   const cur = String(Math.max(0, editingDay));
   from.value = cur;
   to.value = cur;
@@ -883,11 +887,14 @@ function updateStayHint() {
   if (!hint || isNaN(a) || isNaN(b)) { if (hint) hint.classList.remove('show'); return; }
   const { lo, end, nights, checkout } = stayRangeBounds(a, b);
   const name = $('#d-stay').value.trim();
+  const lastIdx = state.days.length - 1;
   // 只选了一天（没形成跨度）时，用户最容易以为「填了名字点一下就会铺满」。
   // 所以这里两件事一起做：提示里把下一步说清楚，按钮也改口叫「只填这天」。
   const tail = checkout < 0
     ? ' —— 想连住几天，把「退房」选到后面的日期'
-    : `（D${checkout + 1} 是退房日，不填）`;
+    : checkout > lastIdx
+      ? '（住到行程结束，最后一天也填）'
+      : `（D${checkout + 1} 是退房日，不填）`;
   hint.textContent = nights === 1
     ? `只会填 D${lo + 1} 这天${tail}`
     : `会把「${name || '这个住宿'}」填到 D${lo + 1}—D${end + 1}，共 ${nights} 天${tail}`;
@@ -906,8 +913,9 @@ function applyStayRange() {
   for (let i = lo; i <= end; i++) if (state.days[i]) state.days[i].stay = name;
   commit();
   closeDayModal();
+  const note = hi > state.days.length - 1 ? '住满全程' : `D${hi + 1} 退房不填`;
   toast(hi > lo
-    ? `已把「${name}」填到 D${lo + 1}—D${end + 1}（${nights} 天，D${hi + 1} 退房不填）`
+    ? `已把「${name}」填到 D${lo + 1}—D${end + 1}（${nights} 天，${note}）`
     : `已把「${name}」填到 D${lo + 1}（1 天）`);
 }
 function saveDay() {
