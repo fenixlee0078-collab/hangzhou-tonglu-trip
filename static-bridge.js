@@ -22,6 +22,7 @@
   var K_TOKEN = 'trip_gh_token';     // 数据仓库令牌（只授权那一个私有仓库）
   var K_REPO  = 'trip_gh_repo';      // 数据仓库 用户名/仓库名
   var K_GKEY  = 'trip_google_key';   // 浏览器专用谷歌 Key（可覆盖 site-config.js）
+  var K_AKEY  = 'trip_amap_key';     // 高德 Key（国内行程搜索用，可覆盖 site-config.js）
   var K_DATA  = 'trip_data_cache';   // 行程数据本机副本
 
   // ===== 站点命名空间（多行程互不串数据的前提）=====
@@ -78,7 +79,18 @@
   function token()    { return ls.get(K_TOKEN).trim(); }
   function repo()     { return (ls.get(K_REPO) || CFG.dataRepo || '').trim().replace(/^\/+|\/+$/g, ''); }
   function gkey()     { return (ls.get(K_GKEY) || CFG.googleKey || '').trim(); }
+  function akey()     { return (ls.get(K_AKEY) || CFG.amapKey || '').trim(); }
   function dataPath() { return CFG.dataPath || 'data.json'; }
+
+  // ===== 地点搜索走哪家地图：国内高德 / 海外谷歌 =====
+  // 只由 site-config 的 mapProvider 决定。没写 mapProvider 的老行程才按「配了哪把 Key」
+  // 推断 —— 老逻辑一律猜 google，结果国内行程的静态版跑去调谷歌，国内网络根本连不上，
+  // 表现就是「搜什么都说没搜到」（2026-09-18 修）。
+  function provider() {
+    if (CFG.mapProvider === 'amap' || CFG.mapProvider === 'google') return CFG.mapProvider;
+    if (gkey()) return 'google';
+    return 'amap';
+  }
 
   function pad2(n) { return n < 10 ? '0' + n : '' + n; }
   function fmtTime(d) { return pad2(d.getHours()) + ':' + pad2(d.getMinutes()); }
@@ -473,19 +485,20 @@
   function tripConfigPayload() {
     var c = CFG.searchCenter || {};
     return {
-      // 显式声明优先；没声明时按「有没有配谷歌 Key」推断，而不是一律当成 google——
-      // 国内行程的静态版忘了写 mapProvider 会导致点导航打开打不开的谷歌链接（app.js 默认是 amap）
-      mapProvider: (CFG.mapProvider === 'amap' || CFG.mapProvider === 'google')
-        ? CFG.mapProvider
-        : (gkey() ? 'google' : 'amap'),
+      // 一律走 provider()：导航和搜索必须用同一家，否则会出现「搜到的是高德的结果，
+      // 点导航却打开谷歌」这种自相矛盾
+      mapProvider: provider(),
       cityName: CFG.cityName || '',
+      searchCity: CFG.searchCity || '',
       searchCenter: [Number(c.lng) || 0, Number(c.lat) || 0],
-      amapKeyConfigured: false,
+      amapKeyConfigured: !!akey(),
       googlePlacesKeyConfigured: !!gkey()
     };
   }
   function placeStatusPayload() {
-    return { ok: true, enabled: !!gkey(), source: gkey() ? 'google' : 'none' };
+    var p = provider();
+    var ok = (p === 'google') ? !!gkey() : !!akey();
+    return { ok: true, enabled: ok, source: ok ? p : 'none', mapProvider: p };
   }
 
   function districtOf(p) {
@@ -567,6 +580,76 @@
     return { ok: true, results: out.slice(0, 12), source: 'google' };
   }
 
+  // ===== 国内：高德 Web 服务 REST（浏览器直连）=====
+  // ⚠ 高德「Web服务」Key **没有来源限制**（Referer 白名单是「Web端 JS API」Key 才有的），
+  //   这把 Key 公开在页面上，别人抄走就能用。别把设了 IP 白名单、或大额配额的 Key 放这儿。
+  function amapErr(j) {
+    if (!j) return '';
+    if (String(j.status) === '1') return '';
+    return (j.info || '未知错误') + (j.infocode ? '（' + j.infocode + '）' : '');
+  }
+  function splitLoc(s) {
+    var a = String(s || '').split(',');
+    var lng = parseFloat(a[0]), lat = parseFloat(a[1]);
+    return (isFinite(lng) && isFinite(lat)) ? [lng, lat] : null;
+  }
+  // 高德的 address / district 字段有时是空数组 []（没有该信息），直接当字符串用会渲染成 ""
+  function amapStr(v) { return Array.isArray(v) ? '' : String(v || ''); }
+
+  async function searchAmap(kw) {
+    var key = akey();
+    if (!key) return { ok: false, reason: 'nokey' };
+    var q = String(kw || '').trim();
+    if (!q) return { ok: true, results: [], hint: 'no-local-match', source: 'amap' };
+
+    var city = CFG.searchCity || '';
+    var c = CFG.searchCenter || {};
+    var base = 'https://restapi.amap.com/v3/';
+    // 输入提示：最适合「边打边搜」，POI 与地址点都会返
+    var tipUrl = base + 'assistant/inputtips?key=' + encodeURIComponent(key)
+      + '&keywords=' + encodeURIComponent(q)
+      + '&city=' + encodeURIComponent(city) + '&citylimit=false&datatype=all';
+    // 关键词搜索：结果更完整（带详细地址）；有搜索中心时按距离排序，跨区也能优先给出附近的
+    var poiUrl = base + 'place/text?key=' + encodeURIComponent(key)
+      + '&keywords=' + encodeURIComponent(q)
+      + '&city=' + encodeURIComponent(city) + '&citylimit=false&offset=12&page=1&extensions=base'
+      + ((c.lng && c.lat) ? '&location=' + c.lng + ',' + c.lat + '&sortrule=distance' : '');
+
+    function grab(u) {
+      return REAL_FETCH(u).then(function (r) { return r.json(); }).catch(function () { return null; });
+    }
+    var both = await Promise.all([grab(tipUrl), grab(poiUrl)]);
+    var tips = both[0], pois = both[1];
+    var eTip = tips ? amapErr(tips) : '×';
+    var ePoi = pois ? amapErr(pois) : '×';
+    // 两个接口都不可用：分清「网络到不了高德」和「高德拒了这把 Key」，别混成一句「搜不到」
+    if (!(tips && !eTip) && !(pois && !ePoi)) {
+      var why = (tips && eTip) ? eTip : ((pois && ePoi) ? ePoi : '');
+      return { ok: false, reason: why ? 'amap' : 'network', error: why };
+    }
+
+    var out = [], byName = {};
+    function push(name, address, district, loc) {
+      name = String(name || '').trim();
+      var ll = splitLoc(loc);                  // 没坐标的条目没法导航，直接丢
+      if (!name || byName[name] || !ll) return;
+      byName[name] = 1;
+      out.push({ name: name, address: address, district: district, lng: ll[0], lat: ll[1] });
+    }
+    if (pois && !ePoi) {                        // 关键词搜索更完整，排前面
+      (pois.pois || []).forEach(function (p) {
+        push(p.name, amapStr(p.address), amapStr(p.adname) || amapStr(p.cityname), p.location);
+      });
+    }
+    if (tips && !eTip) {                        // 输入提示补上 POI 与地址点
+      (tips.tips || []).forEach(function (p) {
+        push(p.name, amapStr(p.address), amapStr(p.district), p.location);
+      });
+    }
+    if (!out.length) return { ok: true, results: [], hint: 'no-local-match', source: 'amap' };
+    return { ok: true, results: out.slice(0, 12), source: 'amap' };
+  }
+
   window.fetch = function (input, init) {
     var url = '';
     try { url = typeof input === 'string' ? input : (input && input.url) || ''; } catch (e) {}
@@ -578,7 +661,8 @@
       if (path === '/api/place/search') {
         var q = '';
         try { q = new URL(url, location.href).searchParams.get('q') || ''; } catch (e) {}
-        return searchPlaces(q).then(
+        // 国内走高德、海外走谷歌 —— 与导航用的是同一个 provider()
+        return (provider() === 'google' ? searchPlaces : searchAmap)(q).then(
           function (d) { return jsonResponse(d); },
           function (e) { console.warn(e); return jsonResponse({ ok: false, reason: 'error' }); }
         );
@@ -595,12 +679,24 @@
     var elRepo = document.getElementById('c-repo');
     var elTok = document.getElementById('c-token');
     var elKey = document.getElementById('c-gkey');
+    var elAkey = document.getElementById('c-akey');
     var elState = document.getElementById('c-state');
+    // 只露出这一趟用得上的那把 Key（国内=高德、海外=谷歌），
+    // 免得用户对着一个用不上的输入框发懵
+    var rowG = document.getElementById('c-gkey-row');
+    var rowA = document.getElementById('c-akey-row');
+    function syncKeyRows() {
+      var overseas = provider() === 'google';
+      if (rowG) rowG.hidden = !overseas;
+      if (rowA) rowA.hidden = overseas;
+    }
 
     function open() {
       elRepo.value = repo();
       elTok.value = token();
       elKey.value = gkey();
+      if (elAkey) elAkey.value = akey();
+      syncKeyRows();
       elState.textContent = (token() && repo())
         ? '当前：云端同步已开启'
         : '当前：数据只存在这台设备';
@@ -616,12 +712,15 @@
       var tk = elTok.value.trim();
       var rp = elRepo.value.trim().replace(/^\/+|\/+$/g, '');
       var gk = elKey.value.trim();
+      var ak = elAkey ? elAkey.value.trim() : '';
 
       ls.set(K_REPO, rp);
       ls.set(K_GKEY, gk);
+      // 存空串 = 回到 site-config 里的值（不是「禁用」）
+      ls.set(K_AKEY, ak);
       if (tk) ls.set(K_TOKEN, tk); else ls.del(K_TOKEN);
 
-      // 谷歌 Key 可能刚填上：让 app.js 重新探一次「搜索是否可用」
+      // Key 可能刚填上：让 app.js 重新探一次「搜索是否可用」
       if (typeof window.checkPlaceSearchEnabled === 'function') window.checkPlaceSearchEnabled();
 
       if (!tk || !rp) {
