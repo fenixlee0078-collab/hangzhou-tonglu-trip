@@ -9,7 +9,7 @@
   <meta name="referrer" content="no-referrer-when-downgrade" />
   <title>杭州桐庐 3天2夜</title>
   <link rel="stylesheet" href="theme.css?v=2" />
-  <link rel="stylesheet" href="style.css?v=7" />
+  <link rel="stylesheet" href="style.css?v=8" />
 </head>
 <body>
 
@@ -120,17 +120,22 @@
             <input id="m-end" type="date" />
           </div>
         </div>
-        <!-- 同行成员：费用按「谁垫的钱」算账，所以这里必须是具体的人（角色），
-             而不是「2人」这种认不出是谁、也没法对账的写法。 -->
+        <!-- 同行人数 + 角色：几个人由你定，系统不替你假设。
+             默认角色名是 A、B、C…，点名字可以改成「我」「老婆」。 -->
         <div class="field-row">
-          <label>同行成员 <span class="lbl-hint">费用按这些人算账</span></label>
+          <label>同行人数 <span class="lbl-hint">只有你一个人就选 1</span></label>
+          <div id="m-party" class="party-pick"></div>
+          <div id="m-party-mode" class="mem-hint"></div>
+        </div>
+        <div class="field-row">
+          <label>同行角色 <span class="lbl-hint">点名字可改成「我」「老婆」</span></label>
           <div id="m-member-list" class="mem-list"></div>
-          <div class="mem-add">
-            <input id="m-member-input" type="text" placeholder="填称呼，如：我 / 老婆 / 孩子 / 老王" maxlength="12" />
-            <button type="button" class="mem-add-btn" id="btn-add-member">＋ 添加</button>
-          </div>
           <div id="m-member-presets" class="mem-presets"></div>
-          <div class="mem-hint">垫付人和参与分摊的人，都从这份名单里选；点名字可以改称呼，改了历史费用会跟着改。</div>
+          <div class="mem-add">
+            <input id="m-member-input" type="text" placeholder="自定义称呼，如：我 / 老婆 / 老王" maxlength="12" />
+            <button type="button" class="mem-add-btn" id="btn-add-member">＋ 加一个角色</button>
+          </div>
+          <div class="mem-hint">费用里的垫付人和参与分摊的人，都从这份名单里选；改称呼后历史费用会跟着改。</div>
         </div>
         <div class="field-row"><label>出发前提醒</label><input id="m-remind" type="text" placeholder="身份证、充电宝、雨具…" /></div>
         <div class="field-row"><label>页脚标语</label><input id="m-footer" type="text" /></div>
@@ -394,6 +399,6 @@
        顺序要紧：site-config.js（站点配置）→ static-bridge.js（先定义 io/fetch 替身）→ app.js -->
   <script src="site-config.js?v=3"></script>
   <script src="static-bridge.js?v=7"></script>
-  <script src="app.js?v=10"></script>
+  <script src="app.js?v=11"></script>
 </body>
 </html>
