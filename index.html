@@ -9,7 +9,7 @@
   <meta name="referrer" content="no-referrer-when-downgrade" />
   <title>杭州桐庐 3天2夜</title>
   <link rel="stylesheet" href="theme.css?v=2" />
-  <link rel="stylesheet" href="style.css?v=4" />
+  <link rel="stylesheet" href="style.css?v=5" />
 </head>
 <body>
 
@@ -133,7 +133,23 @@
     <div class="modal">
       <div class="modal-head"><h3 id="day-modal-title">编辑这一天</h3><button class="modal-close" id="day-close">✕</button></div>
       <div class="modal-body">
-        <div class="field-row"><label>住宿</label><input id="d-stay" type="text" placeholder="如：芦茨村 · 民宿" /></div>
+        <!-- 住宿：连住同一家酒店时不必一天一天重复填 —— 选个起止天，一次铺满这段。
+             只改 day.stay，数据结构不变，老行程的数据与云端同步都不受影响。 -->
+        <div class="field-row">
+          <label>住宿 <span class="lbl-hint">同一家住多天，可用下面的范围一次填好</span></label>
+          <input id="d-stay" type="text" placeholder="酒店 / 民宿名称" list="stay-list" />
+          <datalist id="stay-list"></datalist>
+        </div>
+        <div class="field-row">
+          <label>住这几天 <span class="lbl-hint">含首尾两天</span></label>
+          <div class="stay-range">
+            <select id="d-stay-from"></select>
+            <span class="sr-sep">→</span>
+            <select id="d-stay-to"></select>
+            <button type="button" class="mini" id="btn-apply-stay">铺满这段</button>
+          </div>
+          <div class="calc-hint" id="stay-range-hint"></div>
+        </div>
         <div class="field-row"><label>日期</label><input id="d-date" type="date" /></div>
       </div>
       <div class="modal-foot">
@@ -365,6 +381,6 @@
        顺序要紧：site-config.js（站点配置）→ static-bridge.js（先定义 io/fetch 替身）→ app.js -->
   <script src="site-config.js?v=1"></script>
   <script src="static-bridge.js?v=6"></script>
-  <script src="app.js?v=3"></script>
+  <script src="app.js?v=4"></script>
 </body>
 </html>
