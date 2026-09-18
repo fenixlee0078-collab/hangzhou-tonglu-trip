@@ -865,6 +865,15 @@ function fillStayDatalist() {
   dl.innerHTML = names.map(n => `<option value="${escapeHtml(n)}"></option>`).join('');
 }
 
+// 边界怎么算，两处（提示 / 落数据）都用它，避免两边说法不一致。
+// 语义：终点选的这天是「退房日」，那天已经退房不住了，所以不填 —— 只填到「退房日 - 1」。
+// 例：9.26 入住、9.28 退房 → 终点选 9.28，住宿落在 9.26、9.27 两晚。
+function stayRangeBounds(a, b) {
+  const lo = Math.min(a, b), hi = Math.max(a, b);   // 起止选反了也照认这段
+  const end = hi > lo ? hi - 1 : lo;                // 只选同一天时没有退房日可言，就当住这一天
+  return { lo, hi, end, nights: end - lo + 1, checkout: hi > lo ? hi : -1 };
+}
+
 // 实时说明「这一步会写哪几天」，不让用户稀里糊涂改掉一堆数据
 function updateStayHint() {
   const hint = $('#stay-range-hint');
@@ -872,12 +881,12 @@ function updateStayHint() {
   const a = parseInt($('#d-stay-from').value, 10);
   const b = parseInt($('#d-stay-to').value, 10);
   if (isNaN(a) || isNaN(b)) { hint.classList.remove('show'); return; }
-  const lo = Math.min(a, b), hi = Math.max(a, b);
-  const n = hi - lo + 1;
+  const { lo, end, nights, checkout } = stayRangeBounds(a, b);
   const name = $('#d-stay').value.trim();
-  hint.textContent = n === 1
-    ? `只会填 D${lo + 1} 这天`
-    : `会把「${name || '这个住宿'}」填到 D${lo + 1}—D${hi + 1}，共 ${n} 天`;
+  const tail = checkout >= 0 ? `（D${checkout + 1} 是退房日，不填）` : '';
+  hint.textContent = nights === 1
+    ? `只会填 D${lo + 1} 这天${tail}`
+    : `会把「${name || '这个住宿'}」填到 D${lo + 1}—D${end + 1}，共 ${nights} 天${tail}`;
   hint.classList.add('show');
 }
 
@@ -889,11 +898,13 @@ function applyStayRange() {
   const b = parseInt($('#d-stay-to').value, 10);
   if (isNaN(a) || isNaN(b)) return;
   // 起止选反了也照填（用户按 D3→D1 选，本意就是这段）
-  const lo = Math.min(a, b), hi = Math.max(a, b);
-  for (let i = lo; i <= hi; i++) if (state.days[i]) state.days[i].stay = name;
+  const { lo, end, hi, nights } = stayRangeBounds(a, b);
+  for (let i = lo; i <= end; i++) if (state.days[i]) state.days[i].stay = name;
   commit();
   closeDayModal();
-  toast(`已把「${name}」填到 D${lo + 1}—D${hi + 1}（${hi - lo + 1} 天）`);
+  toast(hi > lo
+    ? `已把「${name}」填到 D${lo + 1}—D${end + 1}（${nights} 天，D${hi + 1} 退房不填）`
+    : `已把「${name}」填到 D${lo + 1}（1 天）`);
 }
 function saveDay() {
   if (editingDay < 0) return;
