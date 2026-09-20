@@ -9,7 +9,7 @@
   <meta name="referrer" content="no-referrer-when-downgrade" />
   <title>杭州桐庐 3天2夜</title>
   <link rel="stylesheet" href="theme.css?v=2" />
-  <link rel="stylesheet" href="style.css?v=14" />
+  <link rel="stylesheet" href="style.css?v=15" />
 </head>
 <body>
 
@@ -156,6 +156,13 @@
           <label>住宿 <span class="lbl-hint">同一家住多天，选下面的起止日期一次填好</span></label>
           <input id="d-stay" type="text" placeholder="酒店 / 民宿名称" list="stay-list" />
           <datalist id="stay-list"></datalist>
+          <!-- 定位酒店（2026-09-20 加）：定好之后，入住期间的每一天以及离店日，
+               当天第一条的「到这里的交通」起点默认就从这家酒店算起（入住当天不算）。
+               只改默认起点，行程条目的文字 / 地点一个字都不动。 -->
+          <div class="coord-row" id="d-stay-loc-row">
+            <button type="button" class="mini" id="btn-stay-loc">📍 定位酒店</button>
+            <span id="d-coord-stay" class="coord-state"></span>
+          </div>
         </div>
         <div class="field-row">
           <label>住这几天 <span class="lbl-hint">退房那天不用住，自动不填</span></label>
@@ -439,6 +446,6 @@
        顺序要紧：site-config.js（站点配置）→ static-bridge.js（先定义 io/fetch 替身）→ app.js -->
   <script src="site-config.js?v=4"></script>
   <script src="static-bridge.js?v=11"></script>
-  <script src="app.js?v=17"></script>
+  <script src="app.js?v=18"></script>
 </body>
 </html>
