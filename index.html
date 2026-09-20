@@ -244,9 +244,8 @@
           <button type="button" class="sub-add" id="btn-add-sub">＋ 添加子地点</button>
         </div>
         <div class="field-row"><label>备注</label><textarea id="f-note" placeholder="补充说明…"></textarea></div>
-        <div class="field-row">
-          <label class="checkbox-label"><input id="f-food" type="checkbox" /> 这是吃饭的饭店（点击时提供大众点评 / 高德双选）</label>
-        </div>
+        <!-- 「这是吃饭的饭店」勾选框 2026-09-20 已删：改成按类型自动判定 ——
+             类型选「餐饮」+ 国内行程，点地点就弹「高德 / 大众点评」双选；海外直跳谷歌地图。 -->
       </div>
       <div class="modal-foot">
         <button class="mini warn" id="btn-del-item">🗑 删除</button>
@@ -446,6 +445,6 @@
        顺序要紧：site-config.js（站点配置）→ static-bridge.js（先定义 io/fetch 替身）→ app.js -->
   <script src="site-config.js?v=4"></script>
   <script src="static-bridge.js?v=11"></script>
-  <script src="app.js?v=18"></script>
+  <script src="app.js?v=19"></script>
 </body>
 </html>
