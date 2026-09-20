@@ -402,6 +402,7 @@ function renderTimeline() {
           ${showTime ? `<div class="time">${escapeHtml(item.time)}</div>` : ''}
           <div class="body">
             <div class="t">${titleHtml}${placeTag}</div>
+            ${legLineHTML(item)}
             ${subsHtml}
             ${item.note ? `<div class="n">${escapeHtml(item.note)}</div>` : ''}
           </div>
@@ -916,6 +917,264 @@ function resolvePlace(name) {
   return preset ? { lng: preset[0], lat: preset[1], calibrated: false } : null;
 }
 
+// ===== 上一站 → 本站的交通耗时 =====
+//
+// 需求（用户 2026-09-20）：「加一个从上一个行程的地点到这个行程的地点的交通方式选择，
+//   选了之后自动查地图上的耗时，方便规划行程预留时间；海外默认谷歌、国内默认高德」
+//
+// 数据：item.leg = { mode, minutes, meters, src, at, from }
+//   · mode 必填（walk / transit / drive / bike），其余都是查到的快照
+//   · 查不到（没网 / Key 没开通）就只留 mode，列表上不显示耗时 —— 绝不显示「约 0 分钟」
+//   · 快照跟着 item 存进 data.json，不做本机缓存：一趟行程的段数有限，而「这段路当时
+//     要多久」本就该跟着行程走、跨设备可见（汇率那套本机缓存是另一回事）
+//   · from 记下起点名字 —— 顺序一调整起点就变了，渲染时一比对就知道这份快照过期了
+//
+// 起点 = 时间线上「紧邻的上一个已定位地点」，跨天承接。
+//   为什么跨天：早上从昨天最后落脚的地方去今天的第一个点，这是行程的真实读法；
+//   为什么不拿住宿当起点：住宿只有日期区间，没有坐标。
+//
+// 查耗时走 /api/route（静态版由 static-bridge.js 顶替、本地版由 server.js 顶替）——
+// Key 一直留在桥/后端里，前端只拿得到「配没配」两个布尔值，这条路不破。
+const LEG_MODES = [
+  { key: 'walk',    ico: '🚶', name: '步行', am: 'walk', gm: 'walking' },
+  { key: 'transit', ico: '🚇', name: '公交', am: 'bus',  gm: 'transit' },
+  { key: 'drive',   ico: '🚗', name: '驾车', am: 'car',  gm: 'driving' },
+  { key: 'bike',    ico: '🚴', name: '骑行', am: 'ride', gm: 'bicycling' }
+];
+function legMeta(key) { return LEG_MODES.find(m => m.key === key) || null; }
+let legBusy = false;      // 正在查（渲染用）
+let legErr = '';          // 上一次查失败的原因（渲染用，不落盘）
+
+// 时间线上紧邻的上一个有坐标的地点（跨天承接）；返回 { name, lng, lat, day, idx }
+function prevLegSpot(di, ii) {
+  if (!state || !Array.isArray(state.days) || di < 0) return null;
+  let found = null;
+  for (let d = 0; d <= di; d++) {
+    const day = state.days[d];
+    const items = (day && day.items) || [];
+    const stop = (d === di) ? Math.min(ii, items.length) - 1 : items.length - 1;
+    for (let i = 0; i <= stop; i++) {
+      const it = items[i];
+      if (!it) continue;
+      const name = String(it.place || '').trim();
+      if (!name) continue;
+      const c = resolveItemCoord(it);
+      if (!c) continue;
+      found = { name, lng: c.lng, lat: c.lat, day: d, idx: i };
+    }
+  }
+  return found;
+}
+
+// 弹窗里这一条的终点坐标（刚选的地优先，其次看已存进 item 的）
+function legTargetCoord() {
+  const name = parentPlaceName();
+  if (!name) return null;
+  if (pickedPlace && pickedPlace.name === name
+      && typeof pickedPlace.lng === 'number' && typeof pickedPlace.lat === 'number') {
+    return { name, lng: pickedPlace.lng, lat: pickedPlace.lat };
+  }
+  const { day, idx } = editingItem;
+  const it = (day >= 0 && idx >= 0 && state.days[day]) ? state.days[day].items[idx] : null;
+  const c = resolveItemCoord(it);
+  return c ? { name, lng: c.lng, lat: c.lat } : null;
+}
+
+function legDistText(meters) {
+  const m = Number(meters) || 0;
+  if (m <= 0) return '';
+  return m < 1000 ? `${Math.round(m)} 米` : `${(m / 1000).toFixed(1)} 公里`;
+}
+
+// 查询失败时说人话：把「没网」「Key 没开通」「Key 没权限」分清，
+// 否则用户只会看到一句「没查到」，永远不知道是自己少点了一个开关
+function legErrText(r) {
+  const why = (r && r.reason) || '';
+  const err = String((r && r.error) || '');
+  if (why === 'network') {
+    return isOverseas() ? '连不上谷歌（要能访问谷歌的网络），可以点「地图」自己看' : '网络不通，没查到；可以点「地图」自己看';
+  }
+  if (why === 'google-off') return '这把谷歌 Key 没开通 Routes API —— 去谷歌云给 Key 勾上这个接口即可（详见技能文档），或先点「地图」看';
+  if (why === 'nokey') return isOverseas() ? '这趟还没配谷歌 Key' : '这趟还没配高德 Key';
+  if (why === 'google-down') return '谷歌暂时连不上（自动冷却中），过几分钟再试';
+  if (why === 'nocoord') return '起点或终点缺少坐标';
+  if (why === 'badmode') return '交通方式不对';
+  if (/INSUFFICIENT_PRIVILEGES|10012/.test(err)) return '这把高德 Key 没有公交路径规划的权限';
+  if (/SERVICE_NOT_AVAILABLE|10002/.test(err)) return '高德这个方式暂时不可用';
+  return err ? ('没查到：' + err) : '没查到';
+}
+
+// 把交通那一段渲染到编辑弹窗（唯一出口）
+function renderLegField() {
+  const box = $('#leg-modes');
+  const info = $('#leg-info');
+  if (!box || !info) return;
+  const { day, idx } = editingItem;
+  const item = (day >= 0 && idx >= 0 && state.days[day]) ? state.days[day].items[idx] : null;
+  const mode = (item && item.leg && item.leg.mode) || '';
+  box.innerHTML = LEG_MODES.map(m =>
+    `<button type="button" class="leg-mode${m.key === mode ? ' on' : ''}" data-leg-mode="${m.key}">${m.ico} ${escapeHtml(m.name)}</button>`
+  ).join('');
+
+  const from = (day >= 0) ? prevLegSpot(day, idx) : null;
+  const to = legTargetCoord();
+  const rows = [];
+  if (!from) {
+    rows.push('<div class="leg-hint">前面还没有定位过的地点 —— 先给上一站搜选好地点，这里才算得出</div>');
+  } else {
+    rows.push(`<div class="leg-from">从 <b>${escapeHtml(from.name)}</b> 过来</div>`);
+  }
+  if (from && !to) rows.push('<div class="leg-hint">这个地点还没定位，先在上面搜选地点</div>');
+
+  if (!mode) {
+    rows.push('<div class="leg-hint">选一个交通方式，我来查要多久</div>');
+  } else if (from && to) {
+    if (legBusy) {
+      rows.push('<div class="leg-hint wait">正在查…</div>');
+    } else {
+      const leg = item.leg || {};
+      const meta = legMeta(mode) || LEG_MODES[0];
+      const has = typeof leg.minutes === 'number' && leg.minutes > 0;
+      rows.push('<div class="leg-line">'
+        + `<span class="leg-ico">${meta.ico}</span>`
+        + `<input class="leg-min" id="leg-min" type="text" inputmode="numeric" maxlength="4"`
+        + ` value="${has ? leg.minutes : ''}" placeholder="—" />`
+        + '<span class="leg-unit">分钟</span>'
+        + (leg.meters ? `<span class="leg-dst">${legDistText(leg.meters)}</span>` : '')
+        + (has ? `<span class="leg-src">${leg.src === 'manual' ? '手填' : (leg.src === 'google' ? '谷歌' : '高德')}</span>` : '')
+        + '<button type="button" class="leg-refresh" id="btn-leg-refresh" title="重新查一次">↻</button>'
+        + '<button type="button" class="leg-map" id="btn-leg-map" title="在地图里看这条路线">地图</button>'
+        + '</div>');
+      // 起点变过 → 这份耗时是上一段的，别让它冒充这一段
+      if (leg.from && leg.from !== from.name) {
+        rows.push(`<div class="leg-hint err">上一站已经是「${escapeHtml(from.name)}」了，这个耗时是旧的，点 ↻ 重查</div>`);
+      }
+      if (legErr) rows.push('<div class="leg-hint err">' + escapeHtml(legErr) + '</div>');
+      else if (!has) rows.push('<div class="leg-hint">还没查到，点 ↻ 试一次</div>');
+    }
+  }
+  info.innerHTML = rows.join('');
+}
+
+// 选/取消交通方式：选完立刻查一次
+function setLegMode(key) {
+  const { day, idx } = editingItem;
+  if (day < 0 || idx < 0) return;
+  const item = state.days[day].items[idx];
+  if (!item || !legMeta(key)) return;
+  legErr = '';
+  if (item.leg && item.leg.mode === key) {
+    delete item.leg;                 // 再点一次 = 取消
+    commit();
+    renderLegField();
+    return;
+  }
+  item.leg = { mode: key };          // 先只记方式，查到多少算多少
+  commit();
+  renderLegField();
+  refreshLeg();
+}
+
+// 查一次耗时并写进 item.leg（快照）
+async function refreshLeg() {
+  const { day, idx } = editingItem;
+  if (day < 0 || idx < 0) return;
+  const item = state.days[day].items[idx];
+  if (!item || !item.leg) return;
+  const meta = legMeta(item.leg.mode);
+  const from = prevLegSpot(day, idx);
+  const to = legTargetCoord();
+  if (!meta || !from || !to) { renderLegField(); return; }
+
+  legBusy = true;
+  legErr = '';
+  renderLegField();
+  let r = null;
+  try {
+    const qs = `mode=${encodeURIComponent(meta.key)}&from=${from.lng},${from.lat}&to=${to.lng},${to.lat}`;
+    const res = await fetchWithTimeout('/api/route?' + qs, {}, 20000);
+    r = await res.json();
+  } catch (e) {
+    r = { ok: false, reason: 'network' };
+  }
+  legBusy = false;
+
+  const cur = state.days[day] && state.days[day].items[idx];
+  if (!cur || !cur.leg || cur.leg.mode !== meta.key) { renderLegField(); return; }  // 期间又改了
+  if (r && r.ok) {
+    cur.leg = {
+      mode: meta.key, minutes: r.minutes, meters: r.meters,
+      src: r.source || 'amap', from: from.name, at: Date.now()
+    };
+    legErr = '';
+  } else {
+    cur.leg = { mode: meta.key };    // 查不到只留方式，别留半截数字
+    legErr = legErrText(r);
+  }
+  commit();
+  renderLegField();
+}
+
+// 手填/改分钟数（查不到时的兜底）：改了就算「手填」，点 ↻ 仍能重新查
+function setLegMinutes(v) {
+  const { day, idx } = editingItem;
+  const item = (day >= 0 && idx >= 0 && state.days[day]) ? state.days[day].items[idx] : null;
+  if (!item || !item.leg) return;
+  const n = Math.round(Number(v));
+  if (!isFinite(n) || n <= 0) {
+    delete item.leg.minutes; delete item.leg.meters; delete item.leg.src;
+  } else {
+    item.leg.minutes = n;
+    item.leg.src = 'manual';
+  }
+  commit();
+  renderLegField();
+}
+
+// 在地图里看这条路线：国内唤起高德、海外唤起谷歌（走网页链接，手机自己会跳 App）
+function openLegMap() {
+  const { day, idx } = editingItem;
+  const item = (day >= 0 && idx >= 0 && state.days[day]) ? state.days[day].items[idx] : null;
+  const meta = legMeta(item && item.leg && item.leg.mode);
+  if (!meta) return;
+  const from = prevLegSpot(day, idx);
+  const to = legTargetCoord();
+  if (!from || !to) { toast('起点或终点还没定位，算不了路线'); return; }
+
+  const inWeChat = /MicroMessenger|wxwork|WeChat/i.test(navigator.userAgent || '');
+  const web = isOverseas()
+    ? `https://www.google.com/maps/dir/?api=1&origin=${from.lat},${from.lng}&destination=${to.lat},${to.lng}&travelmode=${meta.gm}`
+    : `https://uri.amap.com/navigation?from=${from.lng},${from.lat},${encodeURIComponent(from.name)}`
+      + `&to=${to.lng},${to.lat},${encodeURIComponent(to.name)}&mode=${meta.am}&coordinate=gaode&callnative=1`;
+  if (inWeChat) { showAppGuide(isOverseas() ? '谷歌地图' : '高德地图', web); return; }
+  window.open(web, '_blank');
+}
+
+// 列表上那一行小字：只有真查到耗时才显示
+function legLineHTML(item) {
+  const leg = item && item.leg;
+  if (!leg) return '';
+  const meta = legMeta(leg.mode);
+  if (!meta) return '';
+  if (!(typeof leg.minutes === 'number' && leg.minutes > 0)) return '';
+  return `<div class="leg"><span class="leg-ico">${meta.ico}</span>约 ${leg.minutes} 分钟</div>`;
+}
+
+function bindLegEvents() {
+  const row = $('#leg-row');
+  if (!row) return;
+  row.addEventListener('click', (ev) => {
+    const mBtn = ev.target.closest ? ev.target.closest('[data-leg-mode]') : null;
+    if (mBtn) { setLegMode(mBtn.dataset.legMode); return; }
+    if (ev.target.closest && ev.target.closest('#btn-leg-refresh')) { refreshLeg(); return; }
+    if (ev.target.closest && ev.target.closest('#btn-leg-map')) { openLegMap(); return; }
+  });
+  // 分钟数手改：change 在手机上等于「输入完 / 失焦」，桌面回车也走它
+  row.addEventListener('change', (ev) => {
+    if (ev.target && ev.target.id === 'leg-min') setLegMinutes(ev.target.value);
+  });
+}
+
 // ===== 地点导航 =====
 let navPlace = '';
 // 点击行程项里的地点：
@@ -1413,6 +1672,8 @@ function openItemModal(di, ii) {
   renderPlaceField();
   refreshCoordState();
   renderSubsField();
+  legErr = '';                 // 上一次查失败的原因不跨弹窗
+  renderLegField();
   placePickTarget = { mode: 'main', subIndex: -1 };   // 新开一次弹窗，选取意图复位
   $('#item-mask').classList.add('show');
 }
@@ -1929,6 +2190,9 @@ function saveItem() {
     if (!item.subs.length) delete item.subs;
   }
   subNoteDirty = false;   // 弹窗里攒的子地点备注已经被这里一起收下了
+  // 交通耗时：方式没了的整段删掉；留下的顺手规整（只有方式、没耗时的也留着 ——
+  // 那是「选过，只是没查到」，用户下次打开还能点 ↻ 重查）
+  if (item.leg && !legMeta(item.leg.mode)) delete item.leg;
   // 坐标处理：坐标必须和地名对得上，否则导航会跳错地方
   if (pickedPlace && pickedPlace.name === name) {
     item.lng = pickedPlace.lng;
@@ -2643,6 +2907,7 @@ function bindEvents() {
   $('#meta-close').addEventListener('click', closeMetaModal);
   bindMemberEditor();
   bindFxEvents();
+  bindLegEvents();   // 编辑弹窗里「到这里的交通」：选方式 / ↻ 重查 / 地图 / 手填分钟
   $('#btn-save-day').addEventListener('click', saveDay);
   $('#day-close').addEventListener('click', closeDayModal);
   $('#btn-del-day').addEventListener('click', deleteDay);
