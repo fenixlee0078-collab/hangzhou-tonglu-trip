@@ -608,7 +608,12 @@ var ROUTE_MODES = {
     // 把「这把 Key 没开通 Routes API」单独认出来（google-off），前端才能提示去开通
     var msg = String((j && j.error && (j.error.message || j.error.status)) || ('谷歌返回 HTTP ' + r.status));
     var blocked = GOOGLE_OFF_RE.test(msg);
-    return { ok: false, reason: blocked ? 'google-off' : 'google', error: msg.slice(0, 140) };
+    if (blocked) return { ok: false, reason: 'google-off', error: msg.slice(0, 140) };
+    // 谷歌回 200 但 `routes` 为空（响应就是一个 `{}`）＝ 这个地区没有该方式的路线数据。
+    // 实测：曼谷点「骑行」不管远近都回 `{}`（谷歌在泰国没有骑行路线覆盖）；
+    // 旧代码会兜到 `'谷歌返回 HTTP ' + status` ＝「没查到：谷歌返回 HTTP 200」，用户看不懂。
+    if (j && !j.error) return { ok: false, reason: 'noroute', mode: mode };
+    return { ok: false, reason: 'google', error: msg.slice(0, 140) };
   }
 
   function routeResult(mode, from, to) {
