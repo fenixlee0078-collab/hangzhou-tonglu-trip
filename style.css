@@ -337,6 +337,8 @@ button{font:inherit;cursor:pointer;border:0;background:none;color:inherit}
 .leg-info{margin-top:9px}
 .leg-from{font-size:12.5px;color:var(--ink2);margin-bottom:6px;overflow-wrap:anywhere}
 .leg-from b{color:var(--forest2)}
+/* 「从 <酒店> 过来」后面那个小标记：告诉用户这个起点是住宿自动带出来的，不是上一站 */
+.leg-from .leg-tag{display:inline-block;margin-left:6px;padding:0 7px;border-radius:999px;font-size:11px;font-weight:600;line-height:1.7;background:var(--fog);color:var(--forest);vertical-align:1px;cursor:default}
 .leg-hint{font-size:12.5px;color:var(--ink3);line-height:1.5}
 .leg-hint.wait{color:var(--moss)}
 .leg-hint.err{color:#C05A4A}
