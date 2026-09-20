@@ -956,7 +956,8 @@ function resolvePlace(name) {
 //   选了之后自动查地图上的耗时，方便规划行程预留时间；海外默认谷歌、国内默认高德」
 //
 // 数据：item.leg = { mode, minutes, meters, src, at, from }
-//   · mode 必填（walk / transit / drive / bike），其余都是查到的快照
+//   · mode 必填（walk / transit / drive / bike；**海外行程没有 bike** —— 谷歌在泰国这类
+//     地方回 200 + `{}`（没有骑行路线数据），给了按钮只会让用户白点一次），其余都是查到的快照
 //   · 查不到（没网 / Key 没开通）就只留 mode，列表上不显示耗时 —— 绝不显示「约 0 分钟」
 //   · 快照跟着 item 存进 data.json，不做本机缓存：一趟行程的段数有限，而「这段路当时
 //     要多久」本就该跟着行程走、跨设备可见（汇率那套本机缓存是另一回事）
@@ -975,13 +976,28 @@ function resolvePlace(name) {
 //
 // 查耗时走 /api/route（静态版由 static-bridge.js 顶替、本地版由 server.js 顶替）——
 // Key 一直留在桥/后端里，前端只拿得到「配没配」两个布尔值，这条路不破。
+// 🔴 海外行程**没有骑行**（用户 2026-09-20 要求）：谷歌在泰国这类地方根本没有骑行路线数据，
+//   查它只会回 200 + `{}` → 用户看到的是一句「谷歌这里没有「骑行」的路线数据」，白点一次。
+//   所以给 bike 打上 overseas:false，由下面的 legModes() 从按钮列表里摘掉。
+//   ⚠ 常量里**必须留着 bike**：国内高德走 v4/direction/bicycling（见 transport-test ⑤ ⑥
+//   那两条「前端 key 与桥/server 的 ROUTE_MODES 完全对齐」的断言），删了国内就没骑行了。
 const LEG_MODES = [
   { key: 'walk',    ico: '🚶', name: '步行', am: 'walk', gm: 'walking' },
   { key: 'transit', ico: '🚇', name: '公交', am: 'bus',  gm: 'transit' },
   { key: 'drive',   ico: '🚗', name: '驾车', am: 'car',  gm: 'driving' },
-  { key: 'bike',    ico: '🚴', name: '骑行', am: 'ride', gm: 'bicycling' }
+  { key: 'bike',    ico: '🚴', name: '骑行', am: 'ride', gm: 'bicycling', overseas: false }
 ];
 function legMeta(key) { return LEG_MODES.find(m => m.key === key) || null; }
+// 本行程能选的交通方式（海外去掉骑行）—— 渲染按钮就用它，别直接遍历 LEG_MODES
+function legModes() { return isOverseas() ? LEG_MODES.filter(m => m.overseas !== false) : LEG_MODES; }
+// 这个方式在本行程里到底能不能用：**所有出口都走这一个判断**，漏一处就会自相矛盾 ——
+// 比如「按钮已经没了，列表里还挂着一行『🚴 约 20 分钟』」。走它的地方：
+//   渲染按钮 / 未选提示（renderLegField）、列表小字（legLineHTML）、
+//   地图（openLegMap）、查询（refreshLeg）、点选（setLegMode）、保存清理（saveItem）
+function legModeUsable(key) {
+  const m = legMeta(key);
+  return !!m && !(isOverseas() && m.overseas === false);
+}
 let legBusy = false;      // 正在查（渲染用）
 let legErr = '';          // 上一次查失败的原因（渲染用，不落盘）
 
@@ -1190,7 +1206,8 @@ function legErrText(r) {
     return isOverseas() ? '连不上谷歌（要能访问谷歌的网络），可以点「地图」自己看' : '网络不通，没查到；可以点「地图」自己看';
   }
   if (why === 'google-off') return '这把谷歌 Key 没开通 Routes API —— 去谷歌云给 Key 勾上这个接口即可（详见技能文档），或先点「地图」看';
-  // 谷歌回 200 但没给路线（实测：曼谷点「骑行」不管远近都这样，泰国没有骑行覆盖）——
+  // 谷歌回 200 但没给路线（实测：曼谷点「骑行」不管远近都这样，泰国没有骑行覆盖；
+  // 2026-09-20 起海外行程干脆不再提供「骑行」按钮，但这条分支仍要留 —— 国内也会查不到）——
   // 这条不能混进「没查到」：用户会以为网络坏了、或者以为功能没做好，其实该换个方式
   if (why === 'noroute') {
     const n = (LEG_MODES.find((m) => m.key === String((r && r.mode) || '')) || {}).name || '这个方式';
@@ -1212,8 +1229,11 @@ function renderLegField() {
   if (!box || !info) return;
   const { day, idx } = editingItem;
   const item = (day >= 0 && idx >= 0 && state.days[day]) ? state.days[day].items[idx] : null;
-  const mode = (item && item.leg && item.leg.mode) || '';
-  box.innerHTML = LEG_MODES.map(m =>
+  const rawMode = (item && item.leg && item.leg.mode) || '';
+  // 海外旧数据里可能存着「骑行」：这里当它没选（按钮已经不提供，没法反选了），
+  // 让用户重选一个即可覆盖；数据本身先留着，等保存时由 saveItem 清掉
+  const mode = legModeUsable(rawMode) ? rawMode : '';
+  box.innerHTML = legModes().map(m =>
     `<button type="button" class="leg-mode${m.key === mode ? ' on' : ''}" data-leg-mode="${m.key}">${m.ico} ${escapeHtml(m.name)}</button>`
   ).join('');
 
@@ -1258,7 +1278,9 @@ function renderLegField() {
   }
 
   if (!mode) {
-    rows.push('<div class="leg-hint">选一个交通方式，我来查要多久</div>');
+    rows.push(rawMode
+      ? `<div class="leg-hint err">「${escapeHtml((legMeta(rawMode) || {}).name || rawMode)}」在海外没有路线数据，换个方式吧</div>`
+      : '<div class="leg-hint">选一个交通方式，我来查要多久</div>');
   } else if (from && to) {
     if (legBusy) {
       rows.push('<div class="leg-hint wait">正在查…</div>');
@@ -1292,7 +1314,7 @@ function setLegMode(key) {
   const { day, idx } = editingItem;
   if (day < 0 || idx < 0) return;
   const item = state.days[day].items[idx];
-  if (!item || !legMeta(key)) return;
+  if (!item || !legModeUsable(key)) return;   // 海外点不到「骑行」，但守卫还是要有
   legErr = '';
   if (item.leg && item.leg.mode === key) {
     delete item.leg;                 // 再点一次 = 取消
@@ -1315,7 +1337,7 @@ async function refreshLeg() {
   const meta = legMeta(item.leg.mode);
   const from = legOriginSpot(day, idx);
   const to = legTargetCoord();
-  if (!meta || !from || !to) { renderLegField(); return; }
+  if (!meta || !legModeUsable(meta.key) || !from || !to) { renderLegField(); return; }
 
   legBusy = true;
   legErr = '';
@@ -1368,6 +1390,10 @@ function openLegMap() {
   const item = (day >= 0 && idx >= 0 && state.days[day]) ? state.days[day].items[idx] : null;
   const meta = legMeta(item && item.leg && item.leg.mode);
   if (!meta) return;
+  if (!legModeUsable(meta.key)) {
+    toast('「' + meta.name + '」在海外没有路线数据，换个方式再看地图');
+    return;
+  }
   const from = legOriginSpot(day, idx);
   const to = legTargetCoord();
   if (!from || !to) { toast('起点或终点还没定位，算不了路线'); return; }
@@ -1386,7 +1412,7 @@ function legLineHTML(item) {
   const leg = item && item.leg;
   if (!leg) return '';
   const meta = legMeta(leg.mode);
-  if (!meta) return '';
+  if (!meta || !legModeUsable(leg.mode)) return '';
   if (!(typeof leg.minutes === 'number' && leg.minutes > 0)) return '';
   return `<div class="leg"><span class="leg-ico">${meta.ico}</span>约 ${leg.minutes} 分钟</div>`;
 }
@@ -2594,9 +2620,10 @@ function saveItem() {
     if (!item.subs.length) delete item.subs;
   }
   subNoteDirty = false;   // 弹窗里攒的子地点备注已经被这里一起收下了
-  // 交通耗时：方式没了的整段删掉；留下的顺手规整（只有方式、没耗时的也留着 ——
-  // 那是「选过，只是没查到」，用户下次打开还能点 ↻ 重查）
-  if (item.leg && !legMeta(item.leg.mode)) delete item.leg;
+  // 交通耗时：方式没了的整段删掉（含海外行程里已经不提供的「骑行」—— 按钮都没了，留着
+  // 这半截只会让「编辑弹窗说没选、列表小字说有骑行耗时」自相矛盾）；留下的顺手规整
+  // （只有方式、没耗时的也留着 —— 那是「选过，只是没查到」，用户下次打开还能点 ↻ 重查）
+  if (item.leg && !legModeUsable(item.leg.mode)) delete item.leg;
   // 出发站只属于交通条目：它是这条「到这里的交通」的终点（先到站，才上得了车）。
   // 名字变了就丢掉旧坐标，交给预置表或让用户重新搜 —— 跟主地点一个规矩。
   if (editingType === 'trip') {
