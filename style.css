@@ -146,6 +146,10 @@ button{font:inherit;cursor:pointer;border:0;background:none;color:inherit}
 .tl-item .item-row:hover{background:linear-gradient(90deg,transparent,rgba(110,143,118,.06))}
 .tl-item.no-time .item-row{grid-template-columns:1fr}
 .tl .time{font-size:12.5px;font-weight:700;color:var(--clay);letter-spacing:.02em;padding-top:1px}
+/* 交通条目在时间列里显示「出发 → 到达」两行：出发时间是主色，到达时间弱一档 */
+.tl .time .time2{display:block;font-size:12px;font-weight:600;color:var(--ink3);letter-spacing:0}
+/* 交通条目的地读作「出发站 → 到达站」：箭头只是分隔符，别让它看起来像可点的链接 */
+.tl .body .t .pin-sep{color:var(--ink3);margin:0 3px;font-size:12.5px;cursor:default}
 .tl .body{min-width:0}
 .tl .body .t{font-weight:600;font-size:14.5px;color:var(--ink);overflow-wrap:anywhere;word-break:break-word}
 /* 地点标签必须允许折行。
