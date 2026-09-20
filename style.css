@@ -321,6 +321,46 @@ button{font:inherit;cursor:pointer;border:0;background:none;color:inherit}
 /* 外币条目的原币小字：主数字是人民币，这行还原当时花的原币 */
 .exp-amt .o{font-size:11px;color:var(--ink3);white-space:nowrap}
 
+/* ---------- 编辑弹窗里的「到这里的交通」 ---------- */
+.leg-modes{display:flex;gap:7px;flex-wrap:wrap}
+.leg-mode{
+  flex:1 1 auto;min-width:70px;padding:9px 8px;border-radius:11px;border:1.5px solid var(--line);
+  background:#fff;color:var(--ink2);font-size:13.5px;font-weight:600;cursor:pointer;
+  font-family:inherit;transition:.16s;-webkit-tap-highlight-color:transparent;
+}
+.leg-mode:hover{border-color:var(--forest2);color:var(--forest2)}
+.leg-mode.on{border-color:var(--forest);background:var(--fog);color:var(--forest)}
+.leg-info{margin-top:9px}
+.leg-from{font-size:12.5px;color:var(--ink2);margin-bottom:6px;overflow-wrap:anywhere}
+.leg-from b{color:var(--forest2)}
+.leg-hint{font-size:12.5px;color:var(--ink3);line-height:1.5}
+.leg-hint.wait{color:var(--moss)}
+.leg-hint.err{color:#C05A4A}
+.leg-line{display:flex;align-items:center;gap:7px;flex-wrap:wrap;font-size:13px;color:var(--ink2)}
+.leg-line .leg-ico{font-size:15px;line-height:1}
+/* 覆盖 .field-row input 的 width:100% —— 分钟数要跟图标、单位挤在同一行 */
+.field-row .leg-line input.leg-min{
+  flex:0 0 auto;width:62px;min-width:0;padding:6px 8px;font-size:14px;
+  text-align:center;font-weight:700;color:var(--forest2);
+}
+.leg-unit{font-size:12.5px;color:var(--ink3)}
+.leg-dst{font-size:12.5px;color:var(--ink3)}
+.leg-src{font-size:11px;color:var(--ink3);border:1px solid var(--line);border-radius:999px;padding:1px 7px}
+.leg-refresh{
+  flex:0 0 auto;width:30px;height:30px;border-radius:50%;border:1px solid var(--line);
+  background:#fff;color:var(--ink2);font-size:14px;line-height:1;cursor:pointer;
+}
+.leg-refresh:hover{border-color:var(--forest2);color:var(--forest2)}
+.leg-map{
+  flex:0 0 auto;padding:6px 12px;border-radius:999px;border:1.5px solid var(--forest);
+  background:#fff;color:var(--forest);font-size:12.5px;font-weight:600;cursor:pointer;font-family:inherit;
+}
+.leg-map:hover{background:var(--fog)}
+/* 列表里行程项下面那行耗时小字 */
+.tl .body .leg{font-size:12px;color:var(--moss);margin-top:3px;display:flex;align-items:center;gap:4px}
+.tl .body .leg .leg-ico{font-size:12.5px;line-height:1}
+.tl-item.done .leg{color:var(--ink3);text-decoration:line-through}
+
 /* ---------- 内嵌计算器 ---------- */
 .calc-panel{
   display:none;margin-top:10px;border:1px solid var(--line);border-radius:14px;
