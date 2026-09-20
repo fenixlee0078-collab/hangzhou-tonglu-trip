@@ -506,7 +506,13 @@
   // 四种方式的接口在两个地图上都不一样，别想着「统一成一个 paths[0]」：
   //   高德 驾车/步行 = v3（route.paths[0]）、骑行 = v4（data.paths[0]）、公交 = v5（route.transits[0]）
   //   谷歌统一 Routes API，按 travelMode 分（DRIVE / WALK / BICYCLE / TRANSIT）
-  var ROUTE_MODES = {
+  // 谷歌「这个接口没开通 / 这把 Key 不许用」有好几种回法，措辞随版本变，别只认一种：
+  //   API_KEY_SERVICE_BLOCKED / SERVICE_DISABLED / PERMISSION_DENIED / API_NOT_ACTIVATED
+  //   "Requests to this API ... are blocked."  ← 2026-09-20 线上实测的新措辞，旧正则漏掉过它
+  //   "... has not been used in project ... or it is disabled"、以及 referer 限制
+  // 认出来才能提示「去谷歌云给 Key 勾上 Routes API」；认不出用户就只看到一句「没查到」
+  var GOOGLE_OFF_RE = /API_KEY_SERVICE_BLOCKED|SERVICE_DISABLED|PERMISSION_DENIED|API_NOT_ACTIVATED|not authorized|referer|is not enabled|has not been used in project|are blocked|is blocked|has been blocked/i;
+var ROUTE_MODES = {
     walk:    { amap: 'v3/direction/walking',            google: 'WALK' },
     drive:   { amap: 'v3/direction/driving',            google: 'DRIVE' },
     bike:    { amap: 'v4/direction/bicycling',          google: 'BICYCLE' },
@@ -601,7 +607,7 @@
     // 谷歌回 403 但页面又没配 Key 时最容易被误读成「查不到」——
     // 把「这把 Key 没开通 Routes API」单独认出来（google-off），前端才能提示去开通
     var msg = String((j && j.error && (j.error.message || j.error.status)) || ('谷歌返回 HTTP ' + r.status));
-    var blocked = /API_KEY_SERVICE_BLOCKED|PERMISSION_DENIED|not authorized|referer/i.test(msg);
+    var blocked = GOOGLE_OFF_RE.test(msg);
     return { ok: false, reason: blocked ? 'google-off' : 'google', error: msg.slice(0, 140) };
   }
 
