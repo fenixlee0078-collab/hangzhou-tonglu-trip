@@ -499,6 +499,118 @@
       googlePlacesKeyConfigured: !!gkey()
     };
   }
+  // ---------- /api/route：两点之间的交通耗时（国内高德 / 海外谷歌） ----------
+  // 需求（用户 2026-09-20）：编辑安排时选个交通方式，自动查「上一站 → 本站」要多久，
+  // 好排行程预留时间；国内默认高德、海外默认谷歌。
+  // 静态页没有后端，这里用页面上的 Key 直接代查（与 /api/place/search 同套路）。
+  // 四种方式的接口在两个地图上都不一样，别想着「统一成一个 paths[0]」：
+  //   高德 驾车/步行 = v3（route.paths[0]）、骑行 = v4（data.paths[0]）、公交 = v5（route.transits[0]）
+  //   谷歌统一 Routes API，按 travelMode 分（DRIVE / WALK / BICYCLE / TRANSIT）
+  var ROUTE_MODES = {
+    walk:    { amap: 'v3/direction/walking',            google: 'WALK' },
+    drive:   { amap: 'v3/direction/driving',            google: 'DRIVE' },
+    bike:    { amap: 'v4/direction/bicycling',          google: 'BICYCLE' },
+    transit: { amap: 'v5/direction/transit/integrated', google: 'TRANSIT' }
+  };
+  function parseLngLat(v) {
+    var m = String(v || '').trim().match(/^(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)$/);
+    if (!m) return null;
+    var lng = Number(m[1]), lat = Number(m[2]);
+    if (!isFinite(lng) || !isFinite(lat)) return null;
+    if (lng < -180 || lng > 180 || lat < -90 || lat > 90) return null;
+    return { lng: lng, lat: lat };
+  }
+  // 秒 → 分钟：不足 1 分钟也记 1 分钟（行程上「0 分钟」没法用来预留时间）
+  function secsToMin(sec) {
+    var s = Number(sec);
+    if (!isFinite(s) || s <= 0) return 0;
+    return Math.max(1, Math.round(s / 60));
+  }
+
+  async function routeByAmap(mode, from, to) {
+    var key = akey();
+    if (!key) return { ok: false, reason: 'nokey' };
+    var u = 'https://restapi.amap.com/' + ROUTE_MODES[mode].amap
+      + '?origin=' + from.lng + ',' + from.lat
+      + '&destination=' + to.lng + ',' + to.lat
+      + '&key=' + encodeURIComponent(key);
+    // 公交必须给城市；⚠ show_fields=cost 也不能省 —— 不带的话 v5 不返回 transits[0].cost，
+    //   耗时恒为 0（meters 有值、minutes 是 0，实测踩过）
+    if (mode === 'transit' && CFG.searchCity) {
+      u += '&city1=' + CFG.searchCity + '&city2=' + CFG.searchCity + '&show_fields=cost';
+    }
+    var j = null;
+    try { j = await REAL_FETCH(u).then(function (r) { return r.json(); }); }
+    catch (e) { return { ok: false, reason: 'network' }; }
+
+    function pack(sec, mtr) {
+      return { ok: true, minutes: secsToMin(sec), meters: Math.round(Number(mtr) || 0), source: 'amap' };
+    }
+    if (mode === 'bike') {                       // v4：没有 status 字段，用 errcode
+      var p = j && j.data && j.data.paths && j.data.paths[0];
+      if (!p) return { ok: false, reason: 'amap', error: String((j && (j.errmsg || j.errordetail)) || '高德未返回骑行路径').slice(0, 80) };
+      return pack(p.duration, p.distance);
+    }
+    if (!j || String(j.status) !== '1') {
+      return { ok: false, reason: 'amap', error: String(((j && j.info) || '高德报错') + (j && j.infocode ? '（' + j.infocode + '）' : '')).slice(0, 100) };
+    }
+    if (mode === 'transit') {                    // v5：耗时和距离都在 transits[0] 上
+      var t = j.route && j.route.transits && j.route.transits[0];
+      if (!t) return { ok: false, reason: 'amap', error: '这一程没有公交方案' };
+      var sec = t.cost && t.cost.duration;
+      if (!sec) return { ok: false, reason: 'amap', error: '公交方案没给耗时' };
+      return pack(sec, t.distance);
+    }
+    var pp = j.route && j.route.paths && j.route.paths[0];
+    if (!pp) return { ok: false, reason: 'amap', error: '高德未返回路径' };
+    return pack(pp.duration, pp.distance);
+  }
+
+  async function routeByGoogle(mode, from, to) {
+    var key = gkey();
+    if (!key) return { ok: false, reason: 'nokey' };
+    var r;
+    try {
+      r = await REAL_FETCH('https://routes.googleapis.com/directions/v2:computeRoutes', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Goog-Api-Key': key,
+          'X-Goog-FieldMask': 'routes.duration,routes.distanceMeters'
+        },
+        body: JSON.stringify({
+          origin: { location: { latLng: { latitude: from.lat, longitude: from.lng } } },
+          destination: { location: { latLng: { latitude: to.lat, longitude: to.lng } } },
+          travelMode: ROUTE_MODES[mode].google,
+          languageCode: 'zh-CN'
+        })
+      });
+    } catch (e) {
+      return { ok: false, reason: 'network' };   // 多半是当前网络到不了谷歌
+    }
+    var j = null;
+    try { j = await r.json(); } catch (e) {}
+    var route = j && j.routes && j.routes[0];
+    if (route) {
+      var sec = Number(String(route.duration || '').replace(/s$/, ''));   // 形如 "1234s"
+      return {
+        ok: true, minutes: secsToMin(sec),
+        meters: Math.round(Number(route.distanceMeters) || 0), source: 'google'
+      };
+    }
+    // 谷歌回 403 但页面又没配 Key 时最容易被误读成「查不到」——
+    // 把「这把 Key 没开通 Routes API」单独认出来（google-off），前端才能提示去开通
+    var msg = String((j && j.error && (j.error.message || j.error.status)) || ('谷歌返回 HTTP ' + r.status));
+    var blocked = /API_KEY_SERVICE_BLOCKED|PERMISSION_DENIED|not authorized|referer/i.test(msg);
+    return { ok: false, reason: blocked ? 'google-off' : 'google', error: msg.slice(0, 140) };
+  }
+
+  function routeResult(mode, from, to) {
+    if (!ROUTE_MODES[mode]) return Promise.resolve({ ok: false, reason: 'badmode' });
+    if (!from || !to) return Promise.resolve({ ok: false, reason: 'nocoord' });
+    return provider() === 'google' ? routeByGoogle(mode, from, to) : routeByAmap(mode, from, to);
+  }
+
   function placeStatusPayload() {
     var p = provider();
     var ok = (p === 'google') ? !!gkey() : !!akey();
@@ -669,6 +781,18 @@
         return (provider() === 'google' ? searchPlaces : searchAmap)(q).then(
           function (d) { return jsonResponse(d); },
           function (e) { console.warn(e); return jsonResponse({ ok: false, reason: 'error' }); }
+        );
+      }
+      if (path === '/api/route') {
+        // 上一站 → 本站的交通耗时（国内高德 / 海外谷歌），坐标走 query
+        var sp = null;
+        try { sp = new URL(url, location.href).searchParams; } catch (e) {}
+        var rmode = sp ? (sp.get('mode') || '') : '';
+        var rfrom = parseLngLat(sp ? sp.get('from') : '');
+        var rto = parseLngLat(sp ? sp.get('to') : '');
+        return routeResult(rmode, rfrom, rto).then(
+          function (d) { return jsonResponse(d); },
+          function (e) { console.warn(e); return jsonResponse({ ok: false, reason: 'network' }); }
         );
       }
     }
