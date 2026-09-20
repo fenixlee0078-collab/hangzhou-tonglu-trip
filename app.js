@@ -358,16 +358,29 @@ function renderTimeline() {
       //  · 都没有          → 灰色「未填写安排」
       const realTitle = (item.title && item.title !== '（无标题）') ? item.title : '';
       const place = (item.place || '').trim();
+      // 交通条目有两个站：package.place 是「到达站」，另有一个 fromStation「出发站」。
+      // 其他类型只有一个地点（fromSt 恒为空），下面的分支自然落到老路上。
+      const isTripRow = itemType(item) === 'trip';
+      const fromSt = isTripRow ? String((item.fromStation || {}).name || '').trim() : '';
       // 标题真的空着时不塞默认文案，只留一个灰色弱提示，避免出现完全空白的行
       const titleHtml = realTitle
         ? escapeHtml(realTitle)
-        : (place ? '' : '<span class="untitled">未填写安排</span>');
+        : ((place || fromSt) ? '' : '<span class="untitled">未填写安排</span>');
       // 有地点就带图钉；地点单独成行时可点，直接跳导航
       // &#8288; 是 word joiner（零宽、不换行、不显示）：把「📍」和地名粘成一个整体，
       // 折行时不会出现「📍」独占一行、地名跑到下一行的情况。
-      const placeTag = place
-        ? `${realTitle ? ' · ' : ''}<span class="pin" data-act="nav-place" data-day="${di}" data-idx="${ii}" title="点击导航">📍&#8288;${escapeHtml(place)}</span>`
-        : '';
+      const mkPin = (act, nm, tip) => `<span class="pin" data-act="${act}" data-day="${di}"`
+        + ` data-idx="${ii}" title="${tip}">📍&#8288;${escapeHtml(nm)}</span>`;
+      let placeTag = '';
+      if (isTripRow && (fromSt || place)) {
+        // 交通条目读作「出发站 → 到达站」，顺序就是行程的先后
+        const segs = [];
+        if (fromSt) segs.push(mkPin('nav-from', fromSt, '点击导航到出发站'));
+        if (place) segs.push(mkPin('nav-place', place, '点击导航到到达站'));
+        placeTag = (realTitle ? ' · ' : '') + segs.join('<span class="pin-sep">→</span>');
+      } else if (place) {
+        placeTag = (realTitle ? ' · ' : '') + mkPin('nav-place', place, '点击导航');
+      }
       // 子地点：挂在父地点下面，各自独立定位、独立导航。
       // 过滤掉没有名字的脏数据，但保留原下标（data-sub 要指向 subs 里真正那一项）
       const subs = (Array.isArray(item.subs) ? item.subs : [])
@@ -399,7 +412,7 @@ function renderTimeline() {
 
       li.innerHTML = `
         <div class="item-row" data-act="edit-item" data-day="${di}" data-idx="${ii}">
-          ${showTime ? `<div class="time">${escapeHtml(item.time)}</div>` : ''}
+          ${showTime ? `<div class="time">${escapeHtml(item.time)}${(isTripRow && item.timeTo) ? `<span class="time2">→${escapeHtml(item.timeTo)}</span>` : ''}</div>` : ''}
           <div class="body">
             <div class="t">${titleHtml}${placeTag}</div>
             ${legLineHTML(item)}
@@ -900,6 +913,18 @@ function resolvePlace(name) {
       if (c) return c;
     }
   }
+  // 交通条目的出发站也要能独立导航：它的名字和坐标只存在 fromStation 里，
+  // 不在 place 字段上，少扫这一轮点「📍出发站」就解不出坐标。
+  for (const day of state.days) {
+    for (const it of (day.items || [])) {
+      const st = it.fromStation;
+      if (!st || String(st.name || '').trim() !== name) continue;
+      if (typeof st.lng === 'number' && typeof st.lat === 'number'
+          && isFinite(st.lng) && isFinite(st.lat)) {
+        return { lng: st.lng, lat: st.lat, calibrated: true };
+      }
+    }
+  }
   // 子地点也在这个池子里：父地点「暹罗天地」下面的「斑斓卷椰子蛋卷」要能独立导航，
   // 它的坐标只存在 subs 里，不扫这一轮就永远解析不出位置。
   for (const day of state.days) {
@@ -933,6 +958,13 @@ function resolvePlace(name) {
 //   为什么跨天：早上从昨天最后落脚的地方去今天的第一个点，这是行程的真实读法；
 //   为什么不拿住宿当起点：住宿只有日期区间，没有坐标。
 //
+// 🔴 交通条目（type==='trip'）有两个站，一个条目同时是「上一段的终点」和「下一段的起点」：
+//   出发站（item.fromStation）＝ 这条「到这里的交通」的**终点**（先到站才上得了车）
+//   到达站（item.place）      ＝ 下一条行程的**起点**（到这儿了，再从这儿走）
+//   所以 prevLegSpot 一行都不用改：它找的就是「上一个已定位的 place」，
+//   而交通条目的 place 恰好就是它的到达站 —— 语义天然对上。
+//   反过来说，交通条目的 place **必须**存到达站、不能存出发站，否则下一条的起点就错了。
+//
 // 查耗时走 /api/route（静态版由 static-bridge.js 顶替、本地版由 server.js 顶替）——
 // Key 一直留在桥/后端里，前端只拿得到「配没配」两个布尔值，这条路不破。
 const LEG_MODES = [
@@ -945,7 +977,7 @@ function legMeta(key) { return LEG_MODES.find(m => m.key === key) || null; }
 let legBusy = false;      // 正在查（渲染用）
 let legErr = '';          // 上一次查失败的原因（渲染用，不落盘）
 
-// 时间线上紧邻的上一个有坐标的地点（跨天承接）；返回 { name, lng, lat, day, idx }
+// 时间线上紧邻的上一个有坐标的地点（跨天承接）；返回 { name, lng, lat, day, idx, it }
 function prevLegSpot(di, ii) {
   if (!state || !Array.isArray(state.days) || di < 0) return null;
   let found = null;
@@ -960,14 +992,64 @@ function prevLegSpot(di, ii) {
       if (!name) continue;
       const c = resolveItemCoord(it);
       if (!c) continue;
-      found = { name, lng: c.lng, lat: c.lat, day: d, idx: i };
+      found = { name, lng: c.lng, lat: c.lat, day: d, idx: i, it };
     }
   }
   return found;
 }
 
-// 弹窗里这一条的终点坐标（刚选的地优先，其次看已存进 item 的）
-function legTargetCoord() {
+// 时间线上「紧邻的上一条」原始条目（跨天承接，不管它有没有坐标）。
+// 只用来判断：上面那个起点是不是从更早的地方顺延过来的 —— 是的话得跟用户说清为什么。
+function prevRawItem(di, ii) {
+  if (!state || !Array.isArray(state.days) || di < 0) return null;
+  for (let d = di; d >= 0; d--) {
+    const items = (state.days[d] && state.days[d].items) || [];
+    const start = (d === di) ? Math.min(ii, items.length) - 1 : items.length - 1;
+    for (let i = start; i >= 0; i--) {
+      if (items[i]) return { it: items[i], day: d, idx: i };
+    }
+  }
+  return null;
+}
+
+// 站点记录 { name, lng?, lat? } → 坐标（没有就查预置表，跟主地点同一套规矩）
+function stationCoord(st) {
+  const name = String((st && st.name) || '').trim();
+  if (!name) return null;
+  if (typeof st.lng === 'number' && typeof st.lat === 'number'
+      && isFinite(st.lng) && isFinite(st.lat)) {
+    return { lng: st.lng, lat: st.lat };
+  }
+  const preset = lookupPlaceCoord(name);
+  return preset ? { lng: preset[0], lat: preset[1] } : null;
+}
+
+// 交通条目的出发站（弹窗里刚选的优先，其次看已存进 item 的）；没名字/没坐标就是 null
+function fromStationSpot() {
+  const { day, idx } = editingItem;
+  const it = (day >= 0 && idx >= 0 && state.days[day]) ? state.days[day].items[idx] : null;
+  const st = (it && it.fromStation) || null;
+  const name = String((pickedFrom && pickedFrom.name) || (st && st.name) || '').trim();
+  if (!name) return null;
+  if (pickedFrom && pickedFrom.name === name
+      && typeof pickedFrom.lng === 'number' && typeof pickedFrom.lat === 'number') {
+    return { name, lng: pickedFrom.lng, lat: pickedFrom.lat };
+  }
+  const c = stationCoord(st);
+  return c ? { name, lng: c.lng, lat: c.lat } : null;
+}
+
+// 弹窗里这条交通的出发站名字（不带坐标也能拿到，给提示语用）
+function fromStationName() {
+  const { day, idx } = editingItem;
+  const it = (day >= 0 && idx >= 0 && state.days[day]) ? state.days[day].items[idx] : null;
+  return String((pickedFrom && pickedFrom.name)
+    || (it && it.fromStation && it.fromStation.name) || '').trim();
+}
+
+// 弹窗里这一条「主地点」的坐标（刚选的地优先，其次看已存进 item 的）。
+// 普通条目 = 它的地点；交通条目 = 它的**到达站**（交通的 place 存的就是到达站）。
+function mainPlaceSpot() {
   const name = parentPlaceName();
   if (!name) return null;
   if (pickedPlace && pickedPlace.name === name
@@ -978,6 +1060,15 @@ function legTargetCoord() {
   const it = (day >= 0 && idx >= 0 && state.days[day]) ? state.days[day].items[idx] : null;
   const c = resolveItemCoord(it);
   return c ? { name, lng: c.lng, lat: c.lat } : null;
+}
+
+// 「到这里的交通」的终点：
+//   普通条目 → 它的地点
+//   交通条目 → 它的**出发站**。先到站、才上得了这趟车；到达站是这条的结果，不是入口。
+//   （用 editingType 而不是 itemType：弹窗里刚切了类型还没保存时，界面要立刻跟上。）
+function legTargetCoord() {
+  if (editingType === 'trip') return fromStationSpot();
+  return mainPlaceSpot();
 }
 
 function legDistText(meters) {
@@ -1022,6 +1113,7 @@ function renderLegField() {
     `<button type="button" class="leg-mode${m.key === mode ? ' on' : ''}" data-leg-mode="${m.key}">${m.ico} ${escapeHtml(m.name)}</button>`
   ).join('');
 
+  const isTripRow = editingType === 'trip';
   const from = (day >= 0) ? prevLegSpot(day, idx) : null;
   const to = legTargetCoord();
   const rows = [];
@@ -1029,8 +1121,21 @@ function renderLegField() {
     rows.push('<div class="leg-hint">前面还没有定位过的地点 —— 先给上一站搜选好地点，这里才算得出</div>');
   } else {
     rows.push(`<div class="leg-from">从 <b>${escapeHtml(from.name)}</b> 过来</div>`);
+    // 起点不是紧邻的那一条 → 中间有没定位的条目，得说清为什么起点跳到了更早的地方
+    const raw = prevRawItem(day, idx);
+    if (raw && !(raw.day === from.day && raw.idx === from.idx)) {
+      const nm = String(raw.it.title || raw.it.place || (raw.it.fromStation || {}).name || '').trim();
+      const why = itemType(raw.it) === 'trip' ? '还没填到达站' : '还没定位';
+      rows.push('<div class="leg-hint">上一条'
+        + (nm ? `「${escapeHtml(nm)}」` : '') + why
+        + `，起点先顺延到了「${escapeHtml(from.name)}」</div>`);
+    }
   }
-  if (from && !to) rows.push('<div class="leg-hint">这个地点还没定位，先在上面搜选地点</div>');
+  if (from && !to) {
+    rows.push(isTripRow
+      ? '<div class="leg-hint">这条的出发站还没定位，先在上面选好出发站</div>'
+      : '<div class="leg-hint">这个地点还没定位，先在上面搜选地点</div>');
+  }
 
   if (!mode) {
     rows.push('<div class="leg-hint">选一个交通方式，我来查要多久</div>');
@@ -1208,6 +1313,14 @@ function navItemPlace(di, ii) {
   const place = (item.place || '').trim();
   if (!place) { toast('这条安排还没填地点'); return; }
   onPoiClick(place, !!item.food);
+}
+// 点交通条目的 📍出发站：名字和坐标存在 item.fromStation 里（不在 place 上）
+function navItemFromPlace(di, ii) {
+  const item = state.days[di] && state.days[di].items[ii];
+  const st = item && item.fromStation;
+  const name = String((st && st.name) || '').trim();
+  if (!name) { toast('这条还没填出发站'); return; }
+  onPoiClick(name, false);
 }
 // 点子地点：按子地点自己的名字和坐标导航。
 // 不继承父地点的 food 标记 —— 「吃饭的饭店」说的是这一条安排的落脚点，
@@ -1625,18 +1738,43 @@ let editingType = 'play';           // 弹窗当前选中的类型
 // 切换类型时：只有交通才露出时间输入框
 // 只负责「类型按钮 + 时间相关控件的显隐」。
 // needTime 由调用方给出（固定类型由规则决定，「其他」由用户勾选决定）。
+// 交通条目在弹窗里换了一副长相（用户 2026-09-20 的需求）：
+//   · 地点   → 「出发站」+「到达站」两个站（出发站是这条的入口，到达站是下一条的起点）
+//   · 时间   → 「出发时间」+「到达时间」
+//   · 子地点 → 藏起来：两个车站之间没有「同一地点里的具体店」这回事
+// 其他类型一个字都不变（出发站那两行整行 hidden，等于不存在）。
 function applyTypeUI(type, needTime) {
   editingType = ITEM_TYPES.some(x => x.key === type) ? type : 'play';
   document.querySelectorAll('#f-type .type-opt').forEach(btn => {
     btn.classList.toggle('on', btn.dataset.type === editingType);
   });
   const isOther = editingType === 'other';
+  const isTrip = editingType === 'trip';
   // 「其他」才显示那个自行决定的勾选框
   const onRow = $('#f-timeon-row');
   if (onRow) onRow.hidden = !isOther;
   if (isOther) $('#f-timeon').checked = !!needTime;
   const row = $('#f-time-row');
   if (row) row.hidden = !needTime;
+  // 到达时间只跟交通条目一起出现，跟着「要不要填时间」走
+  const row2 = $('#f-time2-row');
+  if (row2) row2.hidden = !(isTrip && needTime);
+  const tLbl = $('#f-time-label');
+  if (tLbl) tLbl.textContent = isTrip ? '出发时间' : '时间';
+
+  const fromRow = $('#f-from-row');
+  if (fromRow) fromRow.hidden = !isTrip;
+  const fromCoordRow = $('#f-from-coord-row');
+  if (fromCoordRow) fromCoordRow.hidden = !isTrip;
+  const pLbl = $('#f-place-label');
+  if (pLbl) pLbl.textContent = isTrip ? '到达站' : '地点（用于导航）';
+  const legHint = $('#f-leg-hint');
+  if (legHint) legHint.textContent = isTrip ? '从上一站到这个出发站要多久' : '从上一站过来要多久';
+  PLACE_EMPTY.main = isTrip ? '点这里搜索到达站' : '点这里搜索地点';
+  // 已经存在子地点的交通条目还是要露出来，否则那几条数据就再也删不掉了
+  const subsRow = $('#f-subs-row');
+  if (subsRow) subsRow.hidden = isTrip && currentSubs().length === 0;
+  renderPlaceField();
 }
 
 // 切换类型：
@@ -1648,7 +1786,7 @@ function setEditingType(type, keepTime) {
   applyTypeUI(type, need);
   // 从「要填时间」切到「不用填」时把时间清掉，避免留下一个「看不见但存在」的时间
   // 把下一项提醒搞乱；编辑已有条目时不清（它本来就该是什么就是什么）。
-  if (!keepTime && !need) $('#f-time').value = '';
+  if (!keepTime && !need) { $('#f-time').value = ''; $('#f-time2').value = ''; }
 }
 
 // 「其他」类型下用户改勾选
@@ -1668,12 +1806,23 @@ function openItemModal(di, ii) {
   $('#f-timeon').checked = itemType(item) === 'other' ? need : false;
   applyTypeUI(itemType(item), need);
   $('#f-time').value = item.time || '';
+  $('#f-time2').value = item.timeTo || '';
   $('#f-title').value = item.title || '';
   $('#f-note').value = item.note || '';
   $('#f-food').checked = !!item.food;
-  // 地点不再在弹窗里输入：先把这条的坐标当作「已选定」，再渲染展示行
-  pickedPlace = (typeof item.lng === 'number' && typeof item.lat === 'number')
-    ? { name: item.place, lng: item.lng, lat: item.lat }
+  // 地点不再在弹窗里输入：先把这条的坐标当作「已选定」，再渲染展示行。
+  // ⚠ 只有名字、没有坐标的地点（手动填的那种）也要显示在按钮上 ——
+  //   以前这里只在有坐标时才置值，结果「按名称定位」选完地点，按钮反而显示成「点这里搜索地点」。
+  const pname = String(item.place || '').trim();
+  pickedPlace = pname
+    ? ((typeof item.lng === 'number' && typeof item.lat === 'number')
+        ? { name: pname, lng: item.lng, lat: item.lat } : { name: pname })
+    : null;
+  // 出发站只有名字、没有坐标时也照常显示名字（手动填的地点就是这种情况）
+  const fst = item.fromStation;
+  pickedFrom = (fst && String(fst.name || '').trim())
+    ? ((typeof fst.lng === 'number' && typeof fst.lat === 'number')
+        ? { name: fst.name, lng: fst.lng, lat: fst.lat } : { name: fst.name })
     : null;
   renderPlaceField();
   refreshCoordState();
@@ -1697,7 +1846,8 @@ let placeSearchSeq = 0;              // 防止旧请求覆盖新结果
 let placeSearchEnabled = null;       // 搜索是否可用（国内看高德 Key、海外看谷歌 Key）
 let placeResults = [];               // 当前候选列表
 let selectedIdx = -1;                // 面板里高亮/待确认的候选下标
-let pickedPlace = null;              // 用户已选定的地点 { name, lng, lat }
+let pickedPlace = null;              // 用户已选定的地点 { name, lng, lat }（交通条目里 = 到达站）
+let pickedFrom = null;               // 交通条目的出发站 { name, lng?, lat? }（只交通类用）
 // 这次搜索面板是给谁选的：main=父地点（原有行为）/ sub-add=新增子地点 / sub-edit=替换某个子地点
 let placePickTarget = { mode: 'main', subIndex: -1 };
 let panelOpen = false;
@@ -1713,23 +1863,33 @@ async function checkPlaceSearchEnabled() {
   return placeSearchEnabled;
 }
 
-// 把当前地点渲染到编辑弹窗的那一行（唯一出口，避免各处不一致）
-function renderPlaceField() {
-  const txt = $('#pf-text');
-  const clearBtn = $('#btn-place-clear');
-  const field = $('#btn-open-place');
+// 把当前地点渲染到编辑弹窗的那一行（唯一出口，避免各处不一致）。
+// 两行共用同一套渲染：main = 父地点 / 到达站，from = 出发站。
+const PLACE_EMPTY = { main: '点这里搜索地点', from: '点这里搜索出发站' };
+function renderOnePlaceRow(ids, picked) {
+  const txt = $(ids.text);
+  const clearBtn = $(ids.clear);
+  const field = $(ids.field);
   if (!txt) return;
-  const name = (pickedPlace && pickedPlace.name) || '';
+  const name = (picked && picked.name) || '';
   if (name) {
     txt.textContent = name;
     txt.classList.remove('empty');
     if (field) field.classList.add('has-place');
   } else {
-    txt.textContent = '点这里搜索地点';
+    txt.textContent = PLACE_EMPTY[ids.key];
     txt.classList.add('empty');
     if (field) field.classList.remove('has-place');
   }
   if (clearBtn) clearBtn.hidden = !name;
+}
+const PLACE_ROWS = {
+  main: { key: 'main', field: '#btn-open-place', text: '#pf-text', clear: '#btn-place-clear' },
+  from: { key: 'from', field: '#btn-open-from', text: '#ff-text', clear: '#btn-from-clear' }
+};
+function renderPlaceField() {
+  renderOnePlaceRow(PLACE_ROWS.main, pickedPlace);
+  renderOnePlaceRow(PLACE_ROWS.from, pickedFrom);
 }
 
 // ===== 子地点（父地点下面的具体店铺 / 点位）=====
@@ -1845,13 +2005,16 @@ function openPlacePanel() {
   if (placePickTarget.mode === 'sub-edit') {
     const s = currentSubs()[placePickTarget.subIndex];
     cur = (s && s.name) || '';
+  } else if (placePickTarget.mode === 'from') {
+    cur = fromStationName();
   } else if (placePickTarget.mode !== 'sub-add') {
     cur = (pickedPlace && pickedPlace.name)
       || (state.days[editingItem.day] && state.days[editingItem.day].items[editingItem.idx]
           ? state.days[editingItem.day].items[editingItem.idx].place : '') || '';
   }
   const inp = $('#pp-input');
-  inp.placeholder = placePickTarget.mode === 'main' ? '搜索地点或地址' : '搜索子地点（具体店铺 / 点位）';
+  inp.placeholder = placePickTarget.mode === 'main' ? '搜索地点或地址'
+    : (placePickTarget.mode === 'from' ? '搜索出发站（车站 / 机场 / 地址）' : '搜索子地点（具体店铺 / 点位）');
   inp.value = cur;
   $('#pp-clear').hidden = !cur;
   resetPanelSelection();
@@ -1932,8 +2095,28 @@ function confirmPlace() {
     return;
   }
 
+  // —— 给交通条目的出发站选的 ——
+  if (placePickTarget.mode === 'from') {
+    const { day, idx } = editingItem;
+    if (day < 0 || idx < 0) { closePlacePanel(); return; }
+    const item = state.days[day] && state.days[day].items[idx];
+    if (!item) { closePlacePanel(); return; }
+    pickedFrom = coord ? { name: p.name, lng: coord.lng, lat: coord.lat } : { name: p.name };
+    // 跟父地点一样「选中即落地」：立刻写回 item，地图上的点马上出来
+    item.fromStation = coord
+      ? { name: p.name, lng: coord.lng, lat: coord.lat }
+      : { name: p.name };
+    commit();
+    renderPlaceField();
+    refreshCoordState();
+    renderLegField();       // 出发站一变，这条的「到这里的交通」终点就跟着变
+    closePlacePanel();
+    toast(coord ? '出发站已定位到「' + p.name + '」' : '出发站已填「' + p.name + '」');
+    return;
+  }
+
   // —— 给父地点选的（原有行为）——
-  pickedPlace = coord ? { name: p.name, lng: coord.lng, lat: coord.lat } : null;
+  pickedPlace = coord ? { name: p.name, lng: coord.lng, lat: coord.lat } : { name: p.name };
   renderPlaceField();
   refreshCoordState();
   // 立刻写回行程项，实现「选中即上图」
@@ -1941,13 +2124,18 @@ function confirmPlace() {
   if (day >= 0 && ii >= 0) {
     const item = state.days[day].items[ii];
     item.place = p.name;
-    if (pickedPlace) { item.lng = pickedPlace.lng; item.lat = pickedPlace.lat; }
-    else { delete item.lng; delete item.lat; }
+    // ⚠ 必须按「有没有坐标」判，不能按 pickedPlace 在不在 ——
+    //   手动填的地点（按名称定位）也是 pickedPlace，但它没有 lng/lat，
+    //   写成 item.lng = undefined 会往 data.json 里塞脏值。
+    if (typeof pickedPlace.lng === 'number' && typeof pickedPlace.lat === 'number') {
+      item.lng = pickedPlace.lng; item.lat = pickedPlace.lat;
+    } else { delete item.lng; delete item.lat; }
     commit();
   }
+  renderLegField();               // 地点一变，「到这里的交通」的终点就跟着变
   closePlacePanel();
   renderSubsField();              // 父地点有了，子地点按钮要跟着放开
-  toast(pickedPlace ? '已定位到「' + p.name + '」' : '已添加「' + p.name + '」');
+  toast(coord ? '已定位到「' + p.name + '」' : '已添加「' + p.name + '」');
 }
 
 function clearPlace() {
@@ -1961,9 +2149,23 @@ function clearPlace() {
     delete item.lng; delete item.lat;
     commit();
   }
+  renderLegField();
   // 子地点**不跟着删**：它们各自有名字和坐标，能独立导航（用户可能只是暂时清掉父地点）。
   // 但要刷新一下按钮状态：父地点空了就不该再让加新的子地点。
   renderSubsField();
+}
+
+// 清掉出发站（只交通类有这一行）
+function clearFromPlace() {
+  pickedFrom = null;
+  const { day, idx } = editingItem;
+  if (day >= 0 && idx >= 0) {
+    const item = state.days[day].items[idx];
+    if (item) { delete item.fromStation; commit(); }
+  }
+  renderPlaceField();
+  refreshCoordState();
+  renderLegField();
 }
 
 // ===== 面板内的搜索与列表 =====
@@ -2108,31 +2310,36 @@ function commitPlaceResults(netResults, kw, warnMsg) {
 
 // 刷新「位置」状态提示：已选定坐标 / 已内置 / 待确认
 // 地名来源改为 pickedPlace 或条目本身（不再有 #f-place 输入框）
-function refreshCoordState() {
-  const el = $('#f-coord-state');
-  if (!el) return;
-  const item = editingItem.day >= 0 ? state.days[editingItem.day].items[editingItem.idx] : null;
-  const name = (pickedPlace && pickedPlace.name) || (item && item.place) || '';
-  el.classList.remove('ok', 'preset', 'warn');
-  if (!name) { el.textContent = '未填写地点（地图上不会标注）'; el.classList.add('warn'); return; }
-  if (pickedPlace && pickedPlace.name === name) {
-    el.textContent = `已定位 ${pickedPlace.lng.toFixed(5)}, ${pickedPlace.lat.toFixed(5)} · 已上图`;
-    el.classList.add('ok');
-    return;
+// 一行坐标状态的算法（地点 / 到达站 与 出发站 共用）
+function coordStateOf(name, picked, stored) {
+  if (!name) return { text: '未填写地点（地图上不会标注）', cls: 'warn' };
+  if (picked && picked.name === name && typeof picked.lng === 'number') {
+    return { text: `已定位 ${picked.lng.toFixed(5)}, ${picked.lat.toFixed(5)} · 已上图`, cls: 'ok' };
   }
-  if (item && typeof item.lng === 'number' && typeof item.lat === 'number') {
-    el.textContent = `已校准 ${item.lng.toFixed(5)}, ${item.lat.toFixed(5)}`;
-    el.classList.add('ok');
-    return;
+  if (stored && typeof stored.lng === 'number' && typeof stored.lat === 'number') {
+    return { text: `已校准 ${stored.lng.toFixed(5)}, ${stored.lat.toFixed(5)}`, cls: 'ok' };
   }
   const preset = lookupPlaceCoord(name);
-  if (preset) {
-    el.textContent = `已内置位置 ${preset[0].toFixed(5)}, ${preset[1].toFixed(5)}`;
-    el.classList.add('preset');
-    return;
+  if (preset) return { text: `已内置位置 ${preset[0].toFixed(5)}, ${preset[1].toFixed(5)}`, cls: 'preset' };
+  return { text: '还没搜到精确位置，保存后会标在城区待校准', cls: 'warn' };
+}
+function paintCoordState(el, r) {
+  if (!el) return;
+  el.classList.remove('ok', 'preset', 'warn');
+  el.classList.add(r.cls);
+  el.textContent = r.text;
+}
+function refreshCoordState() {
+  const item = editingItem.day >= 0 ? state.days[editingItem.day].items[editingItem.idx] : null;
+  const name = (pickedPlace && pickedPlace.name) || (item && item.place) || '';
+  paintCoordState($('#f-coord-state'), coordStateOf(name, pickedPlace, item));
+  // 出发站那一行只在交通类下可见，藏起来时不用管
+  const fromRow = $('#f-from-coord-row');
+  if (fromRow && !fromRow.hidden) {
+    const st = (item && item.fromStation) || null;
+    const fname = (pickedFrom && pickedFrom.name) || (st && st.name) || '';
+    paintCoordState($('#f-coord-from'), coordStateOf(fname, pickedFrom, st));
   }
-  el.textContent = '还没搜到精确位置，保存后会标在城区待校准';
-  el.classList.add('warn');
 }
 
 // 本地预置坐标表的模糊匹配（省一次网络往返，也让常用地点秒出）
@@ -2173,11 +2380,17 @@ function saveItem() {
   // 不需要时间的类型，即使输入框里有残留值也不写入，
   // 免得「下一项提醒」把它们当成有确定时间的行程。
   item.time = need ? ($('#f-time').value || '') : '';
+  // 交通条目两头都有时间：item.time = 出发时间、item.timeTo = 到达时间。
+  // 其他类型没有「到达时间」这回事，字段一并删掉（改过类型不留残渣）。
+  if (editingType === 'trip' && need) {
+    const t2 = $('#f-time2').value || '';
+    if (t2) item.timeTo = t2; else delete item.timeTo;
+  } else delete item.timeTo;
   // 只有「其他」才记这个开关；固定类型不留冗余字段，避免以后规则变了两边打架
   if (editingType === 'other') item.timeOn = need;
   else delete item.timeOn;
   item.title = $('#f-title').value.trim(); // 允许为空，渲染时 fallback 到地点
-  item.place = name;
+  item.place = name;   // 交通条目里这是**到达站**：下一条行程就从这儿出发（见 prevLegSpot）
   item.note = $('#f-note').value.trim();
   // 勾了「吃饭的饭店」就是餐饮；选了餐饮类型也自动勾上，两个入口保持一致
   item.food = (editingType === 'food') || $('#f-food').checked;
@@ -2199,8 +2412,24 @@ function saveItem() {
   // 交通耗时：方式没了的整段删掉；留下的顺手规整（只有方式、没耗时的也留着 ——
   // 那是「选过，只是没查到」，用户下次打开还能点 ↻ 重查）
   if (item.leg && !legMeta(item.leg.mode)) delete item.leg;
-  // 坐标处理：坐标必须和地名对得上，否则导航会跳错地方
-  if (pickedPlace && pickedPlace.name === name) {
+  // 出发站只属于交通条目：它是这条「到这里的交通」的终点（先到站，才上得了车）。
+  // 名字变了就丢掉旧坐标，交给预置表或让用户重新搜 —— 跟主地点一个规矩。
+  if (editingType === 'trip') {
+    const fname = fromStationName();
+    if (fname) {
+      const rec = { name: fname };
+      if (pickedFrom && pickedFrom.name === fname && typeof pickedFrom.lng === 'number') {
+        rec.lng = pickedFrom.lng; rec.lat = pickedFrom.lat;
+      } else if (item.fromStation && item.fromStation.name === fname
+                 && typeof item.fromStation.lng === 'number') {
+        rec.lng = item.fromStation.lng; rec.lat = item.fromStation.lat;
+      }
+      item.fromStation = rec;
+    } else delete item.fromStation;
+  } else delete item.fromStation;
+  // 坐标处理：坐标必须和地名对得上，否则导航会跳错地方。
+  // ⚠ 必须连 lng 一起判：手动填的地点只有名字、没有坐标，直接取会写入 undefined。
+  if (pickedPlace && pickedPlace.name === name && typeof pickedPlace.lng === 'number') {
     item.lng = pickedPlace.lng;
     item.lat = pickedPlace.lat;
     item._coordName = name;
@@ -2893,6 +3122,8 @@ function bindEvents() {
     // 排序模式下不跳导航，整行让位给上移/下移按钮。
     else if (act === 'edit-item') { if (sortingDay < 0) navItemPlace(di, ii); }
     else if (act === 'nav-place') { e.stopPropagation(); if (sortingDay < 0) navItemPlace(di, ii); }
+    // 交通条目的出发站（到达站走上面的 nav-place）
+    else if (act === 'nav-from') { e.stopPropagation(); if (sortingDay < 0) navItemFromPlace(di, ii); }
     // 子地点：必须 stopPropagation，否则会冒泡到 .item-row 变成「导航去父地点」
     else if (act === 'nav-sub') {
       e.stopPropagation();
@@ -2967,12 +3198,21 @@ function bindEvents() {
   $('#f-title').addEventListener('keydown', (e) => { if (e.key === 'Enter') saveItem(); });
 
   // ===== 地点搜索面板交互 =====
-  // 点编辑弹窗里的「地点」展示行 → 打开全屏面板
+  // 点编辑弹窗里的「地点 / 到达站」展示行 → 打开全屏面板
   $('#btn-open-place').addEventListener('click', openPlacePanel);
   // 清空按钮别冒泡到展示行（否则会顺手把面板也打开）
   $('#btn-place-clear').addEventListener('click', (e) => {
     e.stopPropagation();
     clearPlace();
+  });
+  // 交通条目的「出发站」：同一个面板，先把选取意图切过去再开
+  $('#btn-open-from').addEventListener('click', () => {
+    placePickTarget = { mode: 'from', subIndex: -1 };
+    openPlacePanel();
+  });
+  $('#btn-from-clear').addEventListener('click', (e) => {
+    e.stopPropagation();
+    clearFromPlace();
   });
 
   // ===== 子地点 =====
