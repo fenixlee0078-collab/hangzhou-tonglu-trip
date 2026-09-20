@@ -1012,6 +1012,102 @@ function prevRawItem(di, ii) {
   return null;
 }
 
+// ===== 住宿当起点：每天早上从住处出发（2026-09-20 加）=====
+// 需求：填了住宿之后，**除了入住当天**，入住期间的每一天以及离店日，当天第一条的
+// 「到这里的交通」起点默认用住宿（酒店）的地址，而不是昨天最后待的地方。
+// 只影响「起点」这一个默认值 —— 条目的标题 / 地点 / 备注一个字都不动。
+//
+// 为什么值得单独做：以前每天早上第一条的起点是「昨天最后待的地方」，
+// 而人其实是睡在酒店的 —— 不修的话「桐君山 → 早上出门」会算成一条根本不存在的路线。
+//
+// 每天的「早上出发地」算法：把整段住宿摊开成若干连续块 [lo..hi]（同名住宿连着的那几天）：
+//   lo   = 入住当天       → 起点不用酒店（那天第一条通常是到达的交通，本来就该接上一站）
+//   lo+1 … hi            = 入住期间的每一天（第二天早上起，人是从酒店出门的）
+//   hi+1 = 离店日         → 也算（那天早上还在酒店，只是当天要退房）
+//   注意 day.stay 的语义：退房日当天**不写 stay**（详见 saveDay），所以离店日要靠 hi+1 推出来。
+function morningHotelNames() {
+  const n = (state && Array.isArray(state.days)) ? state.days.length : 0;
+  const out = new Array(n).fill('');
+  let i = 0;
+  while (i < n) {
+    const name = String((state.days[i] || {}).stay || '').trim();
+    if (!name) { i++; continue; }
+    let hi = i;
+    while (hi + 1 < n && String((state.days[hi + 1] || {}).stay || '').trim() === name) hi++;
+    // 换酒店那天（hi+1 同时是上一家的退房日）：早上人是被上一家叫醒的，所以留上一家
+    for (let k = i + 1; k <= Math.min(hi + 1, n - 1); k++) if (!out[k]) out[k] = name;
+    i = hi + 1;
+  }
+  return out;
+}
+function morningHotelName(di) {
+  const names = morningHotelNames();
+  return (di >= 0 && di < names.length) ? names[di] : '';
+}
+
+// 住宿行上点 📍 定过的坐标（整段住宿共用一份）
+function stayPinnedCoord(name) {
+  for (const d of (state.days || [])) {
+    if (String((d && d.stay) || '').trim() !== name) continue;
+    if (typeof d.stayLng === 'number' && typeof d.stayLat === 'number'
+        && isFinite(d.stayLng) && isFinite(d.stayLat)) {
+      return { lng: d.stayLng, lat: d.stayLat };
+    }
+  }
+  return null;
+}
+
+// 找「行程里已经搜过的同名地点」。住宿名往往只写主名（「四季华桐酒店」），
+// 而用户搜出来的那条带全名和坐标（「四季华桐酒店(桐庐市中心店)」）—— 先精确同名、再掐掉括号比。
+// 为什么宁可复用、不拿名字重新搜一次：搜错会**静默**算出一个错的耗时，比算不出来更糟。
+function findSearchedSpot(name) {
+  const want = String(name || '').trim();
+  if (!want) return null;
+  const nFull = normalizePlaceName(want), nLoose = normalizePlaceNameLoose(want);
+  let loose = null;
+  for (const d of (state.days || [])) {
+    for (const it of ((d && d.items) || [])) {
+      const pn = String((it && it.place) || '').trim();
+      if (!pn) continue;
+      const c = resolveItemCoord(it);
+      if (!c) continue;
+      if (normalizePlaceName(pn) === nFull) return { name: pn, lng: c.lng, lat: c.lat, exact: true };
+      if (!loose && nLoose && normalizePlaceNameLoose(pn) === nLoose) {
+        loose = { name: pn, lng: c.lng, lat: c.lat, exact: false };
+      }
+    }
+  }
+  return loose;
+}
+
+// 这天早上的住宿能不能当起点：能 → { name, lng, lat, hotel:true }；不能（没填 / 没坐标）→ null
+function staySpotOf(di) {
+  const name = morningHotelName(di);
+  if (!name) return null;
+  const pin = stayPinnedCoord(name);
+  if (pin) return { name, lng: pin.lng, lat: pin.lat, hotel: true };
+  const found = findSearchedSpot(name);
+  if (found) return { name: found.name, lng: found.lng, lat: found.lat, hotel: true };
+  return null;
+}
+
+// 「到这里的交通」的起点：常规 = 时间线上紧邻的上一个已定位地点；
+// 例外 = 每天**第一条**、且这天早上是从住处出发的 → 起点用当天住宿。
+function legOriginSpot(di, ii) {
+  const prev = prevLegSpot(di, ii);
+  if (ii !== 0) return prev;
+  const spot = staySpotOf(di);
+  if (!spot) return prev;
+  const it = (((state.days[di] || {}).items) || [])[0];
+  if (!it) return prev;
+  // 这一条自己就在酒店（比如第一条填的就是酒店）→ 起点不该还是酒店，退回常规
+  const own = String(itemType(it) === 'trip'
+    ? ((it.fromStation || {}).name || '')
+    : (it.place || '')).trim();
+  if (own && normalizePlaceNameLoose(own) === normalizePlaceNameLoose(spot.name)) return prev;
+  return spot;
+}
+
 // 站点记录 { name, lng?, lat? } → 坐标（没有就查预置表，跟主地点同一套规矩）
 function stationCoord(st) {
   const name = String((st && st.name) || '').trim();
@@ -1114,21 +1210,37 @@ function renderLegField() {
   ).join('');
 
   const isTripRow = editingType === 'trip';
-  const from = (day >= 0) ? prevLegSpot(day, idx) : null;
+  const from = (day >= 0) ? legOriginSpot(day, idx) : null;
   const to = legTargetCoord();
   const rows = [];
+  // 「早上从住处出发」：这一天（不是入住当天）的第一条，起点默认是当天住宿的酒店。
+  // 酒店还没定位时必须说清「本来想用酒店、现在只能按上一条算」，
+  // 否则用户会以为规则没生效、甚至以为算错了。
+  const hotelName = (day >= 0 && idx === 0) ? morningHotelName(day) : '';
   if (!from) {
-    rows.push('<div class="leg-hint">前面还没有定位过的地点 —— 先给上一站搜选好地点，这里才算得出</div>');
+    if (hotelName) {
+      rows.push(`<div class="leg-hint err">住宿「${escapeHtml(hotelName)}」还没定位 —— 到「编辑这一天」的住宿那行点 📍 搜一次，这里就能按「早上从住处出发」算</div>`);
+    } else {
+      rows.push('<div class="leg-hint">前面还没有定位过的地点 —— 先给上一站搜选好地点，这里才算得出</div>');
+    }
   } else {
-    rows.push(`<div class="leg-from">从 <b>${escapeHtml(from.name)}</b> 过来</div>`);
-    // 起点不是紧邻的那一条 → 中间有没定位的条目，得说清为什么起点跳到了更早的地方
-    const raw = prevRawItem(day, idx);
-    if (raw && !(raw.day === from.day && raw.idx === from.idx)) {
-      const nm = String(raw.it.title || raw.it.place || (raw.it.fromStation || {}).name || '').trim();
-      const why = itemType(raw.it) === 'trip' ? '还没填到达站' : '还没定位';
-      rows.push('<div class="leg-hint">上一条'
-        + (nm ? `「${escapeHtml(nm)}」` : '') + why
-        + `，起点先顺延到了「${escapeHtml(from.name)}」</div>`);
+    rows.push(`<div class="leg-from">从 <b>${escapeHtml(from.name)}</b> 过来`
+      + (from.hotel ? '<span class="leg-tag">住宿</span>' : '') + '</div>');
+    if (from.hotel) {
+      rows.push('<div class="leg-hint">早上从住处出发 —— 起点用的是这天的住宿（入住当天不算）</div>');
+    } else {
+      // 起点不是紧邻的那一条 → 中间有没定位的条目，得说清为什么起点跳到了更早的地方
+      const raw = prevRawItem(day, idx);
+      if (raw && !(raw.day === from.day && raw.idx === from.idx)) {
+        const nm = String(raw.it.title || raw.it.place || (raw.it.fromStation || {}).name || '').trim();
+        const why = itemType(raw.it) === 'trip' ? '还没填到达站' : '还没定位';
+        rows.push('<div class="leg-hint">上一条'
+          + (nm ? `「${escapeHtml(nm)}」` : '') + why
+          + `，起点先顺延到了「${escapeHtml(from.name)}」</div>`);
+      }
+      if (hotelName) {
+        rows.push(`<div class="leg-hint">住宿「${escapeHtml(hotelName)}」还没定位，这一条先按上一条算</div>`);
+      }
     }
   }
   if (from && !to) {
@@ -1158,7 +1270,7 @@ function renderLegField() {
         + '</div>');
       // 起点变过 → 这份耗时是上一段的，别让它冒充这一段
       if (leg.from && leg.from !== from.name) {
-        rows.push(`<div class="leg-hint err">上一站已经是「${escapeHtml(from.name)}」了，这个耗时是旧的，点 ↻ 重查</div>`);
+        rows.push(`<div class="leg-hint err">起点已经是「${escapeHtml(from.name)}」了，这个耗时是旧的，点 ↻ 重查</div>`);
       }
       if (legErr) rows.push('<div class="leg-hint err">' + escapeHtml(legErr) + '</div>');
       else if (!has) rows.push('<div class="leg-hint">还没查到，点 ↻ 试一次</div>');
@@ -1193,7 +1305,7 @@ async function refreshLeg() {
   const item = state.days[day].items[idx];
   if (!item || !item.leg) return;
   const meta = legMeta(item.leg.mode);
-  const from = prevLegSpot(day, idx);
+  const from = legOriginSpot(day, idx);
   const to = legTargetCoord();
   if (!meta || !from || !to) { renderLegField(); return; }
 
@@ -1248,7 +1360,7 @@ function openLegMap() {
   const item = (day >= 0 && idx >= 0 && state.days[day]) ? state.days[day].items[idx] : null;
   const meta = legMeta(item && item.leg && item.leg.mode);
   if (!meta) return;
-  const from = prevLegSpot(day, idx);
+  const from = legOriginSpot(day, idx);
   const to = legTargetCoord();
   if (!from || !to) { toast('起点或终点还没定位，算不了路线'); return; }
 
@@ -1629,7 +1741,12 @@ function openDayModal(di) {
   // 住宿名 + 起止日期；保存时一次把这段填好。
   // 这一天自己的日期不在这里改 —— 「行程信息」里改起止日会整体重算，单改一天没有意义。
   $('#d-stay').value = day.stay || '';
+  // 住宿的坐标（住宿行点 📍 定的）跟着这一天走；没有就置空 ——
+  // 不能顺手沿用上一天的，那会把上一家的坐标写到这一家头上，耗时静默算错。
+  pickedStay = (typeof day.stayLng === 'number' && typeof day.stayLat === 'number')
+    ? { name: day.stay || '', lng: day.stayLng, lat: day.stayLat } : null;
   fillStayRange();
+  refreshStayCoordState();
   $('#day-mask').classList.add('show');
 }
 
@@ -1701,6 +1818,8 @@ function saveDay() {
     let cleared = 0;
     for (let i = lo; i <= end; i++) {
       if (state.days[i] && (state.days[i].stay || '')) { state.days[i].stay = ''; cleared++; }
+      // 住宿名清掉，坐标也得跟着清 —— 留着会让「早上从住处出发」继续用一家已经不存在的酒店
+      if (state.days[i]) { delete state.days[i].stayLng; delete state.days[i].stayLat; }
     }
     if (!cleared) { closeDayModal(); return; }
     commit();
@@ -1709,12 +1828,51 @@ function saveDay() {
     return;
   }
   for (let i = lo; i <= end; i++) if (state.days[i]) state.days[i].stay = name;
+  // 住宿的坐标（住宿行点 📍 定过的）：名字没变才写进这一段，换了名字就丢掉旧的 ——
+  // 跟出发站同一条规矩，宁可让用户重定位一次，也不能把上一家酒店的坐标留在这一家身上。
+  const keepPin = (pickedStay && pickedStay.name === name
+    && typeof pickedStay.lng === 'number' && typeof pickedStay.lat === 'number') ? pickedStay : null;
+  for (let i = lo; i <= end; i++) {
+    const d = state.days[i];
+    if (!d) continue;
+    if (keepPin) { d.stayLng = keepPin.lng; d.stayLat = keepPin.lat; }
+    else { delete d.stayLng; delete d.stayLat; }
+  }
   commit();
   closeDayModal();
   if (nights === 1) { toast(`已把「${name}」填到 D${lo + 1}（1 天）`); return; }
   const note = hi > state.days.length - 1 ? '住到行程结束' : `D${hi + 1} 退房不填`;
   toast(`已把「${name}」填到 D${lo + 1}—D${end + 1}（${nights} 天，${note}）`);
 }
+// 住宿那行的定位状态：📍 定过 / 沿用行程里已搜过的同名地点 / 未定位
+function refreshStayCoordState() {
+  const el = $('#d-coord-stay');
+  if (!el) return;
+  const typed = ($('#d-stay') && $('#d-stay').value.trim()) || '';
+  const name = typed || (editingDay >= 0 ? (state.days[editingDay] || {}).stay || '' : '');
+  if (!name) {
+    el.classList.remove('ok', 'preset', 'warn');
+    el.textContent = '填了住宿名后点「📍 定位酒店」，早上从住处出发的耗时才算得出';
+    return;
+  }
+  if (pickedStay && pickedStay.name === name && typeof pickedStay.lng === 'number') {
+    el.classList.remove('preset', 'warn');
+    el.classList.add('ok');
+    el.textContent = `已定位 ${pickedStay.lng.toFixed(5)}, ${pickedStay.lat.toFixed(5)}`;
+    return;
+  }
+  const found = findSearchedSpot(name);
+  if (found) {
+    el.classList.remove('preset', 'warn');
+    el.classList.add('ok');
+    el.textContent = '沿用行程里「' + found.name + '」的坐标';
+    return;
+  }
+  el.classList.remove('ok', 'preset');
+  el.classList.add('warn');
+  el.textContent = '未定位 —— 定位后「早上从住处出发」的耗时才算得出';
+}
+
 function deleteDay() {
   if (editingDay < 0) return;
   if (state.days.length <= 1) { toast('至少保留一天'); return; }
@@ -1848,6 +2006,7 @@ let placeResults = [];               // 当前候选列表
 let selectedIdx = -1;                // 面板里高亮/待确认的候选下标
 let pickedPlace = null;              // 用户已选定的地点 { name, lng, lat }（交通条目里 = 到达站）
 let pickedFrom = null;               // 交通条目的出发站 { name, lng?, lat? }（只交通类用）
+let pickedStay = null;               // 天弹窗里住宿行点 📍 定的酒店 { name, lng, lat }
 // 这次搜索面板是给谁选的：main=父地点（原有行为）/ sub-add=新增子地点 / sub-edit=替换某个子地点
 let placePickTarget = { mode: 'main', subIndex: -1 };
 let panelOpen = false;
@@ -2007,6 +2166,9 @@ function openPlacePanel() {
     cur = (s && s.name) || '';
   } else if (placePickTarget.mode === 'from') {
     cur = fromStationName();
+  } else if (placePickTarget.mode === 'stay') {
+    // 住宿行的 📍：带出已经填的住宿名，方便在原词基础上改
+    cur = ($('#d-stay') && $('#d-stay').value.trim()) || '';
   } else if (placePickTarget.mode !== 'sub-add') {
     cur = (pickedPlace && pickedPlace.name)
       || (state.days[editingItem.day] && state.days[editingItem.day].items[editingItem.idx]
@@ -2014,7 +2176,8 @@ function openPlacePanel() {
   }
   const inp = $('#pp-input');
   inp.placeholder = placePickTarget.mode === 'main' ? '搜索地点或地址'
-    : (placePickTarget.mode === 'from' ? '搜索出发站（车站 / 机场 / 地址）' : '搜索子地点（具体店铺 / 点位）');
+    : (placePickTarget.mode === 'from' ? '搜索出发站（车站 / 机场 / 地址）'
+      : (placePickTarget.mode === 'stay' ? '搜索酒店 / 民宿（用于算早上出发的耗时）' : '搜索子地点（具体店铺 / 点位）'));
   inp.value = cur;
   $('#pp-clear').hidden = !cur;
   resetPanelSelection();
@@ -2092,6 +2255,17 @@ function confirmPlace() {
     renderSubsField();
     closePlacePanel();            // 这一步会顺手把选取意图复位
     toast((replacing ? '已改为「' : '已添加子地点「') + p.name + '」');
+    return;
+  }
+
+  // —— 给「住宿」那行选的：只写回天弹窗里的选取状态，点保存才落盘 ——
+  if (placePickTarget.mode === 'stay') {
+    const inp = $('#d-stay');
+    if (inp) inp.value = p.name;                  // 一并换成搜到的全名，跟坐标对得上
+    pickedStay = coord ? { name: p.name, lng: coord.lng, lat: coord.lat } : null;
+    refreshStayCoordState();
+    closePlacePanel();
+    toast(coord ? '酒店已定位到「' + p.name + '」' : '酒店名已填「' + p.name + '」，但没坐标、算不了耗时');
     return;
   }
 
@@ -3195,6 +3369,14 @@ function bindEvents() {
     $(sel).addEventListener('keydown', (e) => { if (e.key === 'Enter') saveMeta(); });
   });
   $('#d-stay').addEventListener('keydown', (e) => { if (e.key === 'Enter') saveDay(); });
+  // 住宿行的 📍：复用同一个全屏搜索面板（mode='stay'），选完只写回天弹窗里的选取状态，
+  // 点「保存」才落盘 —— 跟条目弹窗里「选完即上图」不同，这里得能取消。
+  $('#btn-stay-loc').addEventListener('click', () => {
+    placePickTarget = { mode: 'stay', subIndex: -1 };
+    openPlacePanel();
+  });
+  // 手动改住宿名 → 定位状态跟着变（换了名字，上一家的坐标就不该再算数）
+  $('#d-stay').addEventListener('input', refreshStayCoordState);
   $('#f-title').addEventListener('keydown', (e) => { if (e.key === 'Enter') saveItem(); });
 
   // ===== 地点搜索面板交互 =====
