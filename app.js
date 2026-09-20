@@ -135,7 +135,7 @@ const CITY_CURRENCY = {
 // ===== 行程类型 =====
 // 只有「交通」需要准确时间（赶车赶飞机），游玩/餐饮按当天节奏走，时间意义不大。
 // 「其他」是兜底类型：要不要填时间由用户在弹窗里自己勾，结果存在 item.timeOn。
-// 没填 type 的旧数据由 inferType() 从 food 标记和标题关键词推断。
+// 没填 type 的旧数据由 inferType() 从 food 标记（老版本那个勾选框留下的）和标题关键词推断。
 const ITEM_TYPES = [
   { key: 'play',  label: '游玩', emoji: '🎡' },
   { key: 'trip',  label: '交通', emoji: '🚄' },
@@ -156,7 +156,9 @@ const NOT_FOOD_RE = /酒店|宾馆|旅馆|民宿|客栈|度假|体育馆|游泳�
 function inferType(it) {
   const titleNote = String((it && it.title) || '') + ' ' + String((it && it.note) || '');
   const all = titleNote + ' ' + String((it && it.place) || '');
-  // 1) 明确勾了「吃饭的饭店」→ 餐饮（用户亲手标的，优先级最高）
+  // 1) 旧数据里勾过「吃饭的饭店」→ 餐饮
+  //    （界面里那个勾选框 2026-09-20 已删，现在只按「类型」判；这一条是纯兼容路径 ——
+  //      老条目没写 type，只能靠这个标记认出它是吃饭的地方）
   if (it && it.food) return 'food';
   // 2) 交通词只看标题和备注：地点名里有「车站/码头」往往是场地而非行程本身
   if (TRIP_RE.test(titleNote)) return 'trip';
@@ -170,6 +172,12 @@ function itemType(it) {
   if (it && (it.type === 'other' || TYPE_NEEDS_TIME[it.type] !== undefined)) return it.type;
   return inferType(it);
 }
+// 这个地点点开时该不该弹「高德 / 大众点评」双选（而不是直接跳地图导航）：
+//   只有「餐饮」类型才需要 —— 找馆子时看评价跟导航一样重要，其他类型就是纯导航。
+//   海外（google）一律直跳谷歌地图，不看这个，见 onPoiClick()。
+// 为什么不再读 item.food：那个勾选框 2026-09-20 删了，老数据由 inferType() 兜住
+//   （旧条目 food:true 且没写 type → 这里照样判成餐饮）。
+function itemIsDining(it) { return itemType(it) === 'food'; }
 function typeMeta(key) { return ITEM_TYPES.find(x => x.key === key) || ITEM_TYPES[0]; }
 // 这条要不要填时间：
 //   固定类型看 TYPE_NEEDS_TIME；「其他」看用户自己勾的 timeOn。
@@ -1401,15 +1409,15 @@ function bindLegEvents() {
 // ===== 地点导航 =====
 let navPlace = '';
 // 点击行程项里的地点：
-//  · 国内（amap）：吃饭的饭店（item.food）= 弹「高德 / 点评」双选；其他 = 直跳高德
+//  · 国内（amap）：类型是「餐饮」= 弹「高德 / 大众点评」双选；其他类型 = 直跳高德
 //  · 海外（google）：一律直跳谷歌地图，不做餐饮判断
-function onPoiClick(name, isFood) {
+function onPoiClick(name, dining) {
   if (!name) return;
   if (tripConfig.mapProvider === 'google') {
     openGoogleMaps(name);
     return;
   }
-  if (isFood) {
+  if (dining) {
     navPlace = name;
     $('#nav-name').textContent = name;
     $('#nav-mask').classList.add('show');
@@ -1424,7 +1432,8 @@ function navItemPlace(di, ii) {
   if (!item) return;
   const place = (item.place || '').trim();
   if (!place) { toast('这条安排还没填地点'); return; }
-  onPoiClick(place, !!item.food);
+  // 餐饮类型 → 双选；其余类型 → 直跳高德。只看类型，不看那个已经删掉的勾选框。
+  onPoiClick(place, itemIsDining(item));
 }
 // 点交通条目的 📍出发站：名字和坐标存在 item.fromStation 里（不在 place 上）
 function navItemFromPlace(di, ii) {
@@ -1435,7 +1444,7 @@ function navItemFromPlace(di, ii) {
   onPoiClick(name, false);
 }
 // 点子地点：按子地点自己的名字和坐标导航。
-// 不继承父地点的 food 标记 —— 「吃饭的饭店」说的是这一条安排的落脚点，
+// 不继承父地点的餐饮类型 —— 双选说的是「这一条安排的落脚点」，
 // 父地点是商场、子地点是里面一家甜品店时，双选弹给父地点才有意义。
 function navSubPlace(di, ii, si) {
   const item = state.days[di] && state.days[di].items[ii];
@@ -1662,7 +1671,7 @@ function addItem(di) {
   //   · 点 ✕/点遮罩关闭，closeItemModal() 直接丢掉，什么都没发生过。
   state.days[di].items.push({
     id: uid('it'), type: 'play', time: '', title: '', note: '',
-    place: '', food: false, done: false, _new: true
+    place: '', done: false, _new: true
   });
   render();   // 只重绘，不走 commit，所以不广播
   openItemModal(di, state.days[di].items.length - 1);
@@ -1967,7 +1976,6 @@ function openItemModal(di, ii) {
   $('#f-time2').value = item.timeTo || '';
   $('#f-title').value = item.title || '';
   $('#f-note').value = item.note || '';
-  $('#f-food').checked = !!item.food;
   // 地点不再在弹窗里输入：先把这条的坐标当作「已选定」，再渲染展示行。
   // ⚠ 只有名字、没有坐标的地点（手动填的那种）也要显示在按钮上 ——
   //   以前这里只在有坐标时才置值，结果「按名称定位」选完地点，按钮反而显示成「点这里搜索地点」。
@@ -2566,8 +2574,11 @@ function saveItem() {
   item.title = $('#f-title').value.trim(); // 允许为空，渲染时 fallback 到地点
   item.place = name;   // 交通条目里这是**到达站**：下一条行程就从这儿出发（见 prevLegSpot）
   item.note = $('#f-note').value.trim();
-  // 勾了「吃饭的饭店」就是餐饮；选了餐饮类型也自动勾上，两个入口保持一致
-  item.food = (editingType === 'food') || $('#f-food').checked;
+  // 类型选「餐饮」就顺手记下 food 标记（老版本的入口，界面里已经没有那个勾选框了）：
+  //   inferType() 还认它，留着能让老代码 / 老数据读到同一份判断；
+  //   不是餐饮就把字段删掉，不留 food:false 这种冗余（跟 timeTo / timeOn 一个规矩）。
+  if (editingType === 'food') item.food = true;
+  else delete item.food;
   // 子地点：丢掉没名字的脏数据；一个都不剩就把字段删掉，data.json 里不留空数组。
   // 顺手把每条重新拼一遍，好处是 note 的空串、光有 lng 没 lat 这类半截坐标都会被顺平。
   if (Array.isArray(item.subs)) {
