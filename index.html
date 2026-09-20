@@ -9,7 +9,7 @@
   <meta name="referrer" content="no-referrer-when-downgrade" />
   <title>杭州桐庐 3天2夜</title>
   <link rel="stylesheet" href="theme.css?v=2" />
-  <link rel="stylesheet" href="style.css?v=13" />
+  <link rel="stylesheet" href="style.css?v=14" />
 </head>
 <body>
 
@@ -189,10 +189,26 @@
         <div class="field-row" id="f-timeon-row" hidden>
           <label class="checkbox-label"><input id="f-timeon" type="checkbox" /> 这条需要填写时间</label>
         </div>
-        <div class="field-row" id="f-time-row"><label>时间</label><input id="f-time" type="time" /></div>
+        <!-- 交通条目要记两头的时间：出发时刻 + 到达时刻（「到达时间」只在交通类下出现） -->
+        <div class="field-row" id="f-time-row"><label id="f-time-label">时间</label><input id="f-time" type="time" /></div>
+        <div class="field-row" id="f-time2-row" hidden><label>到达时间</label><input id="f-time2" type="time" /></div>
         <div class="field-row"><label>安排内容</label><input id="f-title" type="text" placeholder="新的安排，比如：逛夜市 / 去瑶琳仙境" /></div>
+        <!-- 交通条目的地是两个站：「出发站」在前、「到达站」在后（其他类型只有一个地点）。
+             出发站 = 这条「到这里的交通」的终点；到达站 = 下一条行程的起点。 -->
+        <div class="field-row" id="f-from-row" hidden>
+          <label>出发站 <span class="lbl-hint">从哪儿上车 / 起飞</span></label>
+          <button type="button" class="place-field" id="btn-open-from">
+            <span class="pf-ico">📍</span>
+            <span class="pf-text" id="ff-text">点这里搜索出发站</span>
+            <span class="pf-clear" id="btn-from-clear" hidden>✕</span>
+            <span class="pf-arrow">›</span>
+          </button>
+        </div>
+        <div class="field-row" id="f-from-coord-row" hidden>
+          <div class="coord-row"><span id="f-coord-from" class="coord-state">未定位</span></div>
+        </div>
         <div class="field-row">
-          <label>地点（用于导航）</label>
+          <label id="f-place-label">地点（用于导航）</label>
           <button type="button" class="place-field" id="btn-open-place">
             <span class="pf-ico">📍</span>
             <span class="pf-text" id="pf-text">点这里搜索地点</span>
@@ -208,7 +224,7 @@
         <!-- 到这里的交通：从「上一站」到这个地点的耗时，方便排行程预留时间。
              国内查高德、海外查谷歌（走 /api/route，Key 不落到页面上）。 -->
         <div class="field-row" id="leg-row">
-          <label>到这里的交通 <span class="lbl-hint">从上一站过来要多久</span></label>
+          <label>到这里的交通 <span class="lbl-hint" id="f-leg-hint">从上一站过来要多久</span></label>
           <div class="leg-modes" id="leg-modes"></div>
           <div class="leg-info" id="leg-info"></div>
         </div>
@@ -423,6 +439,6 @@
        顺序要紧：site-config.js（站点配置）→ static-bridge.js（先定义 io/fetch 替身）→ app.js -->
   <script src="site-config.js?v=4"></script>
   <script src="static-bridge.js?v=11"></script>
-  <script src="app.js?v=16"></script>
+  <script src="app.js?v=17"></script>
 </body>
 </html>
