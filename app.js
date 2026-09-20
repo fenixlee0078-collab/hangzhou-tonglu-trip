@@ -995,6 +995,12 @@ function legErrText(r) {
     return isOverseas() ? '连不上谷歌（要能访问谷歌的网络），可以点「地图」自己看' : '网络不通，没查到；可以点「地图」自己看';
   }
   if (why === 'google-off') return '这把谷歌 Key 没开通 Routes API —— 去谷歌云给 Key 勾上这个接口即可（详见技能文档），或先点「地图」看';
+  // 谷歌回 200 但没给路线（实测：曼谷点「骑行」不管远近都这样，泰国没有骑行覆盖）——
+  // 这条不能混进「没查到」：用户会以为网络坏了、或者以为功能没做好，其实该换个方式
+  if (why === 'noroute') {
+    const n = (LEG_MODES.find((m) => m.key === String((r && r.mode) || '')) || {}).name || '这个方式';
+    return '谷歌这里没有「' + n + '」的路线数据，换个方式试试';
+  }
   if (why === 'nokey') return isOverseas() ? '这趟还没配谷歌 Key' : '这趟还没配高德 Key';
   if (why === 'google-down') return '谷歌暂时连不上（自动冷却中），过几分钟再试';
   if (why === 'nocoord') return '起点或终点缺少坐标';
