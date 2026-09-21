@@ -2936,7 +2936,10 @@ function renderFxUI() {
   }
   const src = $('#fx-src');
   if (src) {
-    if (fx.loading) src.textContent = '取实时汇率中…';
+    // 人民币不需要汇率 —— 别在这行写「暂无汇率」，那是「外币还没取到汇率」的意思，
+    // 会让人以为出错了（编辑一条人民币记录时最容易被这么误读）。
+    if (isCny) src.textContent = '按人民币记账，不用汇率';
+    else if (fx.loading) src.textContent = '取实时汇率中…';
     else if (!fx.rate) src.textContent = '暂无汇率';
     else if (fx.source === 'live') src.textContent = '实时汇率' + (fx.date ? ' · ' + fx.date : '');
     else if (fx.source === 'cache') src.textContent = '本机缓存' + (fx.date ? ' · ' + fx.date : '');
@@ -3031,7 +3034,13 @@ function openExpModal(idx) {
   // 币种：海外（或港澳台这类非人民币目的地）才出现这一行。
   // 编辑旧记录时把「记账当时的汇率」摆回去 —— 换成今天的汇率，一保存金额就变了。
   initCurrencySelect();
-  fxApplyCode(e && e.currency ? e.currency : tripDefaultCurrency());
+  // ★ 编辑已有记录：币种只认**这条记录自己存的那个**（没存币种就是人民币），
+  //   绝不借「行程默认」。借了会出两个问题：
+  //   ① 一条人民币记录打开后显示成泰铢 —— 用户以为币种被改了（2026-09-21 反馈的就是这个）；
+  //   ② 更糟：就这么点「保存」，金额会被当外币折一次（¥321.25 悄悄变成 ¥64.74）。
+  //   新建记录才用行程默认（这台设备上次记过的币种优先）。
+  const editCur = e ? (e.currency || 'CNY') : tripDefaultCurrency();
+  fxApplyCode(editCur);
   if (e && e.currency && e.currency !== 'CNY') {
     fx.rate = Number(e.rate) || 0;
     fx.date = e.rateAt || '';
