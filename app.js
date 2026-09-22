@@ -1848,6 +1848,7 @@ function openDayModal(di) {
     ? { name: day.stay || '', lng: day.stayLng, lat: day.stayLat } : null;
   fillStayRange();
   refreshStayCoordState();
+  clearTextSelection();       // 跟条目弹窗一个规矩：显示前把选中的文字清掉
   $('#day-mask').classList.add('show');
 }
 
@@ -2090,6 +2091,7 @@ function openItemModal(di, ii) {
   legErr = '';                 // 上一次查失败的原因不跨弹窗
   renderLegField();
   placePickTarget = { mode: 'main', subIndex: -1 };   // 新开一次弹窗，选取意图复位
+  clearTextSelection();       // 长按进来时残留的文字选中（蓝高亮 + 拷贝菜单）清掉再显示
   $('#item-mask').classList.add('show');
 }
 
@@ -3689,6 +3691,7 @@ function bindEvents() {
 
 bindEvents();
 initLongPressEdit();
+initNoSelect();
 // 启动即拉行程级配置（海内外地图、城市名、搜索中心）
 fetchTripConfig();
 
@@ -3703,6 +3706,29 @@ document.addEventListener('visibilitychange', () => {
   if (!document.hidden && state && refreshAutoFold()) render();
 });
 
+
+// ===== 别让长按顺手选中文字（2026-09-22） =====
+// 现象：长按一条安排 → 弹窗出来了，但系统把那一段文字也选中了，顶着一个蓝色高亮 + 拷贝菜单
+// （拷贝 / 查找所选内容 / 查询 / 翻译），盖在弹窗上很碍事。
+// 成因：长按 500ms 触发弹窗时**手指还没抬起来**，弹窗已经铺在手底下；
+// 浏览器把「还按着」这件事接着算在对新内容的操作上，于是把手指底下那块文字选了起来。
+// 治法分三层，缺一层在部分机型上就漏：
+//   ① 样式里整页禁掉选取（只有输入框/文本域放行）—— 没东西可选
+//   ② 这里拦掉 selectstart —— 光靠 CSS，个别安卓 WebView 长按仍会选
+//   ③ 打开弹窗前把已经产生的选中清掉 —— 兜住「打开之前就已经选上了」的情况
+function clearTextSelection() {
+  try {
+    const sel = window.getSelection && window.getSelection();
+    if (sel && sel.rangeCount) sel.removeAllRanges();
+  } catch (_) {}
+}
+function initNoSelect() {
+  document.addEventListener('selectstart', (e) => {
+    const t = e.target;
+    if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+    e.preventDefault();
+  });
+}
 
 // ===== 长按进入编辑（点击 = 导航，长按 = 编辑） =====
 // 判定：按住不动 500ms 触发编辑；位移超过阈值视为滚动，不计长按。
