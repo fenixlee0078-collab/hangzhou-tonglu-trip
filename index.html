@@ -9,7 +9,7 @@
   <meta name="referrer" content="no-referrer-when-downgrade" />
   <title>杭州桐庐 3天2夜</title>
   <link rel="stylesheet" href="theme.css?v=2" />
-  <link rel="stylesheet" href="style.css?v=15" />
+  <link rel="stylesheet" href="style.css?v=16" />
 </head>
 <body>
 
@@ -244,6 +244,13 @@
           <button type="button" class="sub-add" id="btn-add-sub">＋ 添加子地点</button>
         </div>
         <div class="field-row"><label>备注</label><textarea id="f-note" placeholder="补充说明…"></textarea></div>
+        <div class="field-row">
+          <label>小红书推荐 <span class="lbl-hint">粘贴帖子链接，点 📕 直接打开 App</span></label>
+          <div class="xhs-row">
+            <input id="f-xhs" type="text" inputmode="url" maxlength="500" placeholder="粘贴小红书帖子链接（选填）" />
+            <button type="button" class="xhs-go" id="btn-xhs-open" title="打开小红书看这篇" hidden>📕</button>
+          </div>
+        </div>
         <!-- 「这是吃饭的饭店」勾选框 2026-09-20 已删：改成按类型自动判定 ——
              类型选「餐饮」+ 国内行程，点地点就弹「高德 / 大众点评」双选；海外直跳谷歌地图。 -->
       </div>
@@ -305,15 +312,15 @@
     <div class="modal modal-sm">
       <div class="modal-head"><h3>前往<span id="guide-app-name"></span></h3><button class="modal-close" id="dp-guide-close">✕</button></div>
       <div class="modal-body">
-        <p class="muted">微信 / 企业微信内无法直接唤起大众点评 App（平台限制）。任选一种方式：</p>
+        <p class="muted" id="guide-desc">微信 / 企业微信内无法直接唤起第三方 App（平台限制）。任选一种方式：</p>
         <div class="guide-steps">
-          <div class="guide-step"><b>方式一</b><span>点右上角「···」→「在浏览器打开」，回到页面后再点饭店地点即可唤起 App</span></div>
+          <div class="guide-step"><b>方式一</b><span>点右上角「···」→「在浏览器打开」，回到页面后再点那个地点 / 链接即可唤起 App</span></div>
           <div class="guide-step"><b>方式二</b><span>复制下方链接，粘贴到系统浏览器打开</span></div>
         </div>
         <div class="field-row">
           <input id="dp-url" type="text" readonly />
         </div>
-        <button class="btn-primary btn-block" id="btn-copy-dp">📋 复制搜索链接</button>
+        <button class="btn-primary btn-block" id="btn-copy-dp">📋 复制链接</button>
       </div>
     </div>
   </div>
@@ -445,6 +452,6 @@
        顺序要紧：site-config.js（站点配置）→ static-bridge.js（先定义 io/fetch 替身）→ app.js -->
   <script src="site-config.js?v=4"></script>
   <script src="static-bridge.js?v=11"></script>
-  <script src="app.js?v=21"></script>
+  <script src="app.js?v=22"></script>
 </body>
 </html>
