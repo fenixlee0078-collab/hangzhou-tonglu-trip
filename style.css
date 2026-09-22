@@ -163,6 +163,14 @@ button{font:inherit;cursor:pointer;border:0;background:none;color:inherit}
 .tl .body .t .pin:active{background:rgba(110,143,118,.22)}
 /* 长按中：给点触感反馈，松开/长按生效即恢复 */
 .tl-item .item-row.pressing{background:linear-gradient(90deg,transparent,rgba(110,143,118,.14))}
+/* 别让长按把文字选中（2026-09-22）。
+   长按 500ms 触发编辑弹窗时手指还在屏幕上，浏览器会顺手把手指底下那段文字选起来，
+   弹窗盖上去之后那个蓝色高亮和拷贝菜单还赖着不走。整页禁掉选取，只有输入框/文本域放行
+   —— 备注、地点名要能选能复制的地方照旧；-webkit-touch-callout 管 iOS 的长按呼出菜单。 */
+html,body{-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
+input,textarea,select,[contenteditable="true"]{
+  -webkit-user-select:text;user-select:text;-webkit-touch-callout:default;
+}
 .tl .body .n{font-size:13px;color:var(--ink2);margin-top:2px;overflow-wrap:anywhere;word-break:break-word}
 .tl .body .n:empty{display:none}
 .day-foot{
