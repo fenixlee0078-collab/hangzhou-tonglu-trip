@@ -481,6 +481,30 @@ button{font:inherit;cursor:pointer;border:0;background:none;color:inherit}
 .sub-add:hover{border-color:var(--forest2);background:var(--fog,#F4F8F5)}
 .sub-add:disabled{color:var(--ink3);border-color:var(--line);background:#FAFAFA;cursor:not-allowed}
 .sub-empty{font-size:12.5px;color:var(--ink3);padding:1px 2px 0}
+/* 子地点的类型（2026-09-22）：跟父条目弹窗顶部那排同一套类型，卡片窄所以做小一号的 4 格。
+   选了「餐饮」+ 国内行程，点这个子地点就跟父地点一样弹「高德 / 大众点评」双选。 */
+.sub-item .si-types{display:grid;grid-template-columns:repeat(4,1fr);gap:5px}
+.sub-item .si-type{
+  padding:6px 2px;border:1.5px solid var(--line);border-radius:9px;background:#fff;
+  font-size:12px;font-weight:600;color:var(--ink2);font-family:inherit;cursor:pointer;
+  white-space:nowrap;transition:.16s;
+}
+.sub-item .si-type:active{transform:scale(.97)}
+.sub-item .si-type.on{border-color:var(--forest2);background:var(--fog);color:var(--forest)}
+/* 子地点的小红书链接：跟备注一个规矩 —— 打完失焦自动存，不用再点「保存」 */
+.sub-item .si-xhs-row{display:flex;align-items:center;gap:6px}
+.sub-item .si-xhs{
+  flex:1;min-width:0;box-sizing:border-box;border:1px solid var(--line);border-radius:8px;
+  background:#fff;padding:6px 9px;font-size:13px;line-height:1.4;font-family:inherit;
+  color:var(--ink);outline:none;
+}
+.sub-item .si-xhs::placeholder{color:var(--ink3);opacity:.85}
+.sub-item .si-xhs:focus{border-color:var(--forest2);background:var(--fog,#F4F8F5)}
+.sub-item .si-xhs-go{
+  flex:none;border:1px solid var(--line);background:#fff;border-radius:8px;
+  padding:6px 9px;font-size:13px;line-height:1;font-family:inherit;cursor:pointer;
+}
+.sub-item .si-xhs-go[hidden]{display:none}
 
 /* 时间线里的子地点行：挂在父地点下面，缩进 + 小字号 */
 .tl .body .subs{list-style:none;margin:3px 0 0;padding:0;display:flex;flex-direction:column;gap:1px}
@@ -500,6 +524,10 @@ button{font:inherit;cursor:pointer;border:0;background:none;color:inherit}
   padding:1px 0 2px 18px;overflow-wrap:anywhere;
 }
 .tl-item.done .subs .pin{color:var(--ink3);text-decoration:line-through}
+/* 子地点挂的小红书帖子：跟图钉同一行的一个小 📕，点它开 App 看帖 */
+.tl .body .subs .xhs-btn{
+  margin-left:6px;padding:1px 6px;font-size:11.5px;line-height:1.5;
+}
 
 /* ---------- 地点搜索面板（全屏） ----------
    搜索框钉在顶部：键盘从底部弹起只会压缩下方列表，搜索框永远看得见。
@@ -626,6 +654,27 @@ button{font:inherit;cursor:pointer;border:0;background:none;color:inherit}
 /* 时间行 / 时间开关行整行隐藏（用 hidden 属性，保留 display 默认行为） */
 #f-time-row[hidden],
 #f-timeon-row[hidden]{display:none}
+
+/* ---------- 小红书推荐帖（2026-09-22）----------
+   父条目和子地点都能各挂一篇：弹窗里粘链接，列表上点 📕 由系统接管打开
+   （装了 App 的手机直接进小红书看这篇）。 */
+.xhs-row{display:flex;align-items:center;gap:8px}
+/* 覆盖 .field-row input 的 width:100%，让输入框和 📕 挤在同一行 */
+.xhs-row input{flex:1;min-width:0}
+.xhs-go{
+  flex:none;border:1px solid var(--line);background:#fff;border-radius:10px;
+  padding:11px 13px;font-size:15px;line-height:1;font-family:inherit;cursor:pointer;
+}
+.xhs-go:hover{border-color:var(--forest2);background:var(--fog,#F4F8F5)}
+.xhs-go[hidden]{display:none}
+/* 列表里的入口：父条目一个胶囊按钮，子地点只有一个小 📕（上面单独写过） */
+.tl .body .xhs-line{margin-top:4px}
+.tl .body .xhs-btn{
+  display:inline-block;border:1px solid #F3C9C9;background:#FDF3F3;color:#D2403F;
+  border-radius:999px;padding:2px 9px;font-size:12px;font-weight:600;
+  font-family:inherit;cursor:pointer;line-height:1.6;
+}
+.tl .body .xhs-btn:hover{background:#FBE7E7}
 
 /* ---------- 行程行上的类型小标 ---------- */
 /* 类型只在编辑弹窗里选择，列表上不再展示角标（已移除） */
