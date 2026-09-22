@@ -178,6 +178,24 @@ function itemType(it) {
 // 为什么不再读 item.food：那个勾选框 2026-09-20 删了，老数据由 inferType() 兜住
 //   （旧条目 food:true 且没写 type → 这里照样判成餐饮）。
 function itemIsDining(it) { return itemType(it) === 'food'; }
+// ===== 子地点自己的类型（2026-09-22）=====
+// 子地点原来只能写名字 + 备注，点它一律直跳地图。现在跟父条目一样能选类型，
+// 于是「国内行程 + 餐饮子地点」点下去也该给「高德 / 大众点评」双选。
+//   · 类型存在 subs[i].type，跟父条目共用同一套 ITEM_TYPES 与推断规则；
+//     子地点没有时间 / 交通耗时那些附加行为，类型决定的主要就是「点它给不给点评双选」
+//   · 老数据没写 type：把子地点的名字当成「地点名」喂给 inferType 现推 ——
+//     子地点的名字本来就是具体店铺名（「XX 火锅」），跟父地点一个口径，判得准
+function subAsItem(s) {
+  return { type: s && s.type, place: String((s && s.name) || ''), title: '', note: '' };
+}
+function subType(s) { return itemType(subAsItem(s)); }
+function subIsDining(s) { return subType(s) === 'food'; }
+// 子地点卡片里那排类型按钮（跟父条目弹窗顶部的 #f-type 同款，只是小一号）
+function subTypeChipsHTML(si, cur) {
+  return '<div class="si-types">' + ITEM_TYPES.map(t =>
+    `<button type="button" class="si-type${t.key === cur ? ' on' : ''}"`
+    + ` data-sub-type="${t.key}" data-si="${si}">${t.emoji} ${t.label}</button>`).join('') + '</div>';
+}
 function typeMeta(key) { return ITEM_TYPES.find(x => x.key === key) || ITEM_TYPES[0]; }
 // 这条要不要填时间：
 //   固定类型看 TYPE_NEEDS_TIME；「其他」看用户自己勾的 timeOn。
@@ -401,10 +419,22 @@ function renderTimeline() {
               + ` data-sub="${x.si}" title="点击导航">📍&#8288;${escapeHtml(String(x.s.name).trim())}</span>`;
             // 备注跟着子地点走：换行显示、纯展示不导航，但要点一下 stopPropagation，
             // 否则会冒泡到 .item-row 变成「导航去父地点」
-            return `<li>${subPin}`
+            // 子地点也能各挂一篇小红书（店铺推荐帖）：跟图钉同一行，点它开 App 看帖
+            const subXhs = xhsUrl(x.s.xhs)
+              ? `<button type="button" class="xhs-btn sub-xhs" data-act="xhs-sub"`
+                + ` data-day="${di}" data-idx="${ii}" data-sub="${x.si}">📕</button>`
+              : '';
+            return `<li>${subPin}${subXhs}`
               + (subNote ? `<span class="sub-note" data-act="sub-note">${escapeHtml(subNote)}</span>` : '')
               + '</li>';
           }).join('') + '</ul>'
+        : '';
+      // 这条安排挂了小红书帖子（用户在弹窗里粘的链接，2026-09-22 起）：
+      // 渲染成一个小按钮，点一下交给系统 —— 装了 App 的手机直接进小红书看这篇。
+      // 值统一再过一遍 xhsUrl()：老数据 / 手改过的整段分享文案也照样点得开。
+      const xhsBtnHtml = xhsUrl(item.xhs)
+        ? `<div class="xhs-line"><button type="button" class="xhs-btn" data-act="xhs"`
+          + ` data-day="${di}" data-idx="${ii}">📕 小红书推荐</button></div>`
         : '';
 
       // 排序模式下，第一行不能再上移、最后一行不能再下移 —— 置灰而不是隐藏，
@@ -426,6 +456,7 @@ function renderTimeline() {
             ${legLineHTML(item)}
             ${subsHtml}
             ${item.note ? `<div class="n">${escapeHtml(item.note)}</div>` : ''}
+            ${xhsBtnHtml}
           </div>
           ${sortBtns}
         </div>`;
@@ -1470,14 +1501,15 @@ function navItemFromPlace(di, ii) {
   onPoiClick(name, false);
 }
 // 点子地点：按子地点自己的名字和坐标导航。
-// 不继承父地点的餐饮类型 —— 双选说的是「这一条安排的落脚点」，
-// 父地点是商场、子地点是里面一家甜品店时，双选弹给父地点才有意义。
+// 子地点现在也有自己的类型（2026-09-22）：国内行程 + 餐饮 → 照样弹「高德 / 大众点评」双选。
+// 读的是**子地点自己**的类型，不继承父条目 —— 父地点是商场、子地点是里面一家甜品店，
+// 各判各的才对（父地点是餐饮，不代表挂在它下面的每个点都是吃饭的）。
 function navSubPlace(di, ii, si) {
   const item = state.days[di] && state.days[di].items[ii];
   const s = (item && Array.isArray(item.subs)) ? item.subs[si] : null;
   const name = s ? String(s.name || '').trim() : '';
   if (!name) { toast('这个子地点还没填名字'); return; }
-  onPoiClick(name, false);
+  onPoiClick(name, subIsDining(s));
 }
 // 打开高德地图的「路线规划」页（国内）：
 //   起点 = 我的位置（留空高德自动定位）；默认交通方式 = 公共交通（t=1）
@@ -1588,8 +1620,42 @@ function openDianping(name) {
   }, 2600);
 }
 
+// ===== 小红书帖子链接（2026-09-22）=====
+// 从一段粘贴内容里抠出真正的网址。
+// 用户在 App 里点「分享 → 复制链接」拿到的是一整段：
+//   「34 【标题 - 作者 | 小红书】😆 … 😆 http://xhslink.com/a/xxxx 复制本条信息，打开【小红书】App查看精彩内容！」
+// 直接存进去又长又点不开，所以入库前统一洗一遍：只认 http(s) 开头那一段，
+// 尾巴上的中文和常见收尾符号一并剪掉。
+// 抠不出来（用户手打的「去小红书搜 XX」之类）就返回空串，由调用方决定怎么提示。
+function xhsUrl(raw) {
+  const m = String(raw || '').match(/https?:\/\/[^\s\u4e00-\u9fa5，。、；：！？（）【】《》\u201c\u201d\u2018\u2019]+/i);
+  return m ? m[0] : '';
+}
+
+// 打开一篇小红书帖子：
+//   装了 App 的手机由系统接管（小红书用的是 Universal Link / App Link）→ 直接进 App 看这篇；
+//   没装 / 桌面端 → 落在网页版，内容一样看得到。
+// 微信 / 企业微信内置浏览器不放行第三方 App，跟高德、点评一样走引导弹窗。
+function openXhs(raw) {
+  const url = xhsUrl(raw);
+  if (!url) { toast('这条还没填小红书链接'); return; }
+  const inWeChat = /MicroMessenger|wxwork|WeChat/i.test(navigator.userAgent || '');
+  if (inWeChat) { showAppGuide('小红书', url); return; }
+  window.open(url, '_blank');
+}
+
+// 父条目弹窗里那颗 📕 跟着输入框走：填进了能认的网址才露出来
+function refreshXhsGo() {
+  const inp = $('#f-xhs');
+  const btn = $('#btn-xhs-open');
+  if (inp && btn) btn.hidden = !xhsUrl(inp.value);
+}
+
 function showAppGuide(appName, webUrl) {
   $('#guide-app-name').textContent = appName;
+  // 引导文案里的 App 名字跟着走：这个弹窗现在高德 / 点评 / 小红书三家共用
+  const desc = $('#guide-desc');
+  if (desc) desc.textContent = '微信 / 企业微信内无法直接唤起' + appName + ' App（平台限制）。任选一种方式：';
   $('#dp-url').value = webUrl;
   $('#dp-guide-mask').classList.add('show');
 }
@@ -2002,6 +2068,8 @@ function openItemModal(di, ii) {
   $('#f-time2').value = item.timeTo || '';
   $('#f-title').value = item.title || '';
   $('#f-note').value = item.note || '';
+  // 小红书链接按原样显示（用户看得见自己粘的是什么），跳转时再洗成网址
+  if ($('#f-xhs')) { $('#f-xhs').value = item.xhs || ''; refreshXhsGo(); }
   // 地点不再在弹窗里输入：先把这条的坐标当作「已选定」，再渲染展示行。
   // ⚠ 只有名字、没有坐标的地点（手动填的那种）也要显示在按钮上 ——
   //   以前这里只在有坐标时才置值，结果「按名称定位」选完地点，按钮反而显示成「点这里搜索地点」。
@@ -2114,7 +2182,7 @@ function parentPlaceName() {
 // 子地点的备注是「边打边存」还是「失焦再存」？答案是后者：
 //   · 边打边 commit() 会把整条时间线重绘一次，手机上打字会一卡一卡，还会把输入焦点顶掉
 //   · 所以输入时只改内存里的 subs[si].note，失焦 / 回车 / 关弹窗时统一 flush 一次落盘
-let subNoteDirty = false;
+let subFieldDirty = false;
 
 function setSubNote(si, val) {
   const subs = currentSubs();
@@ -2122,14 +2190,40 @@ function setSubNote(si, val) {
   if (!s) return;
   const v = String(val || '').trim();
   if (v) s.note = v; else delete s.note;   // 清空即删字段，data.json 不留空串
-  subNoteDirty = true;
+  subFieldDirty = true;
 }
 
-// 把攒着的备注改动落一次盘（写盘 + 广播 + 重绘时间线）
-function flushSubNotes() {
-  if (!subNoteDirty) return;
-  subNoteDirty = false;
+// 子地点的小红书链接：同样只写内存，失焦时统一落盘。
+// 存的是**清洗过的网址**，不是用户粘进来的整段分享文案（见 xhsUrl）。
+function setSubXhs(si, val) {
+  const subs = currentSubs();
+  const s = subs[si];
+  if (!s) return;
+  const raw = String(val || '').trim();
+  const url = xhsUrl(raw);
+  if (url) s.xhs = url; else delete s.xhs;
+  subFieldDirty = true;
+}
+
+// 把攒着的改动落一次盘（写盘 + 广播 + 重绘时间线）
+function flushSubFields() {
+  if (!subFieldDirty) return;
+  subFieldDirty = false;
   commit();
+}
+
+// 切子地点的类型：跟父条目那排按钮一样「点了就算数」，立刻写盘并重绘高亮。
+// 用 s.type === type 判重（不是 subType(s)）：用户点过就说明要把这个值定死在数据里，
+// 不能因为「推断出来正好一样」就跳过写入。
+function setSubType(si, type) {
+  const subs = currentSubs();
+  const s = subs[si];
+  if (!s || !ITEM_TYPES.some(t => t.key === type)) return;
+  if (s.type === type) return;
+  s.type = type;
+  subFieldDirty = false;   // 备注 / 链接本来就在同一条数据里，这次 commit 一并写盘
+  commit();
+  renderSubsField();
 }
 
 // 把子地点渲染到编辑弹窗（唯一出口，增删改后都走这里）
@@ -2149,9 +2243,17 @@ function renderSubsField() {
           </button>
           <button type="button" class="si-del" data-sub-del="${si}" title="删除" aria-label="删除">✕</button>
         </div>
+        ${subTypeChipsHTML(si, subType(s))}
         <input type="text" class="si-note" data-sub-note="${si}" maxlength="120"
                placeholder="子地点备注（如：必点斑斓卷）"
                value="${escapeHtml(String(s.note || ''))}" />
+        <div class="si-xhs-row">
+          <input type="text" class="si-xhs" data-sub-xhs="${si}" maxlength="500" inputmode="url"
+                 placeholder="小红书帖子链接（选填）"
+                 value="${escapeHtml(String(s.xhs || ''))}" />
+          <button type="button" class="si-xhs-go" data-sub-xhs-go="${si}"
+                  title="打开小红书看这篇"${s.xhs ? '' : ' hidden'}>📕</button>
+        </div>
       </div>`).join('')
     : '<div class="sub-empty">还没有子地点。</div>';
   // 父地点空着时不让加：子地点是"在某个地点里"的具体店，没有父地点就没有参照，
@@ -2181,7 +2283,7 @@ function deleteSub(si) {
   item.subs.splice(si, 1);
   if (!item.subs.length) delete item.subs;      // 空数组不留，保持 data.json 干净
   commit();
-  subNoteDirty = false;                         // 删掉的那条（连带备注）已经写盘了
+  subFieldDirty = false;                         // 删掉的那条（连带备注）已经写盘了
   renderSubsField();
   toast('已删除子地点「' + gone + '」');
 }
@@ -2275,17 +2377,24 @@ function confirmPlace() {
     const item = state.days[day] && state.days[day].items[idx];
     if (!item) { closePlacePanel(); return; }
     if (!Array.isArray(item.subs)) item.subs = [];
-    const rec = { name: p.name };
+    // 新子地点先按名字猜个类型（「XX 火锅」→ 餐饮），用户随时能在卡片里那排按钮上改。
+    // 猜错也无所谓：默认值只是让「多数情况不用再点一下」，口径跟父地点完全一致。
+    const rec = { name: p.name, type: subType({ name: p.name }) };
     if (coord) { rec.lng = coord.lng; rec.lat = coord.lat; }
     const replacing = placePickTarget.mode === 'sub-edit' && !!item.subs[placePickTarget.subIndex];
     if (replacing) {
-      // 换地点不等于丢备注：备注讲的是「在这个点要干嘛」，改个店名通常还得留着
-      const oldNote = String((item.subs[placePickTarget.subIndex] || {}).note || '').trim();
+      // 换地点不等于丢备注 / 丢类型 / 丢链接：这几样讲的是「在这个点要干嘛」，
+      // 改个店名（改地址、改拼写）通常都得留着。
+      const old = item.subs[placePickTarget.subIndex] || {};
+      const oldNote = String(old.note || '').trim();
       if (oldNote) rec.note = oldNote;
+      if (old.type) rec.type = old.type;        // 用户手动选过的类型不能被推断覆盖
+      const oldXhs = String(old.xhs || '').trim();
+      if (oldXhs) rec.xhs = oldXhs;
       item.subs[placePickTarget.subIndex] = rec;
     } else item.subs.push(rec);
     commit();
-    subNoteDirty = false;         // 上面这次 commit 已把备注一并写盘
+    subFieldDirty = false;         // 上面这次 commit 已把备注一并写盘
     renderSubsField();
     closePlacePanel();            // 这一步会顺手把选取意图复位
     toast((replacing ? '已改为「' : '已添加子地点「') + p.name + '」');
@@ -2600,6 +2709,12 @@ function saveItem() {
   item.title = $('#f-title').value.trim(); // 允许为空，渲染时 fallback 到地点
   item.place = name;   // 交通条目里这是**到达站**：下一条行程就从这儿出发（见 prevLegSpot）
   item.note = $('#f-note').value.trim();
+  // 小红书推荐链接（2026-09-22）：只留能打开的网址那一段 ——
+  // 用户从 App 复制来的是整段分享文案，直接存进去又长又点不开（见 xhsUrl）。
+  // 老版 index.html 缓存里可能没有这个输入框，取不到就当作空（不写字段）。
+  const xhInp = $('#f-xhs');
+  const xh = xhsUrl(xhInp ? xhInp.value : '');
+  if (xh) item.xhs = xh; else delete item.xhs;
   // 类型选「餐饮」就顺手记下 food 标记（老版本的入口，界面里已经没有那个勾选框了）：
   //   inferType() 还认它，留着能让老代码 / 老数据读到同一份判断；
   //   不是餐饮就把字段删掉，不留 food:false 这种冗余（跟 timeTo / timeOn 一个规矩）。
@@ -2615,11 +2730,16 @@ function saveItem() {
         if (typeof s.lng === 'number' && typeof s.lat === 'number') { rec.lng = s.lng; rec.lat = s.lat; }
         const nt = String(s.note || '').trim();
         if (nt) rec.note = nt;
+        // 类型：用户选过的原样留着；老数据没写就把推断结果固化下来，
+        // 免得以后改推断规则把历史数据一起改掉（跟 ensureType 一个思路）
+        rec.type = s.type || subType(rec);
+        const xh = xhsUrl(s.xhs);
+        if (xh) rec.xhs = xh;     // 清洗过的网址，空的不落字段
         return rec;
       });
     if (!item.subs.length) delete item.subs;
   }
-  subNoteDirty = false;   // 弹窗里攒的子地点备注已经被这里一起收下了
+  subFieldDirty = false;   // 弹窗里攒的子地点备注已经被这里一起收下了
   // 交通耗时：方式没了的整段删掉（含海外行程里已经不提供的「骑行」—— 按钮都没了，留着
   // 这半截只会让「编辑弹窗说没选、列表小字说有骑行耗时」自相矛盾）；留下的顺手规整
   // （只有方式、没耗时的也留着 —— 那是「选过，只是没查到」，用户下次打开还能点 ↻ 重查）
@@ -2722,8 +2842,8 @@ function closeItemModal() {
   }
   // 子地点备注只改了内存（见 setSubNote），这里是最后一次落盘机会：
   // 打完备注直接点遮罩关窗、没点「保存」也不会丢。整条被撤掉时则连备注一起作废。
-  if (dropped) subNoteDirty = false;
-  else flushSubNotes();
+  if (dropped) subFieldDirty = false;
+  else flushSubFields();
   $('#item-mask').classList.remove('show');
   editingItem = { day: -1, idx: -1 };
 }
@@ -3352,6 +3472,19 @@ function bindEvents() {
     }
     // 子地点备注只是给人看的，点它不该跳到导航
     else if (act === 'sub-note') { e.stopPropagation(); }
+    // 小红书推荐帖：父条目那个胶囊按钮 / 子地点那个 📕。
+    // 两个都必须 stopPropagation，否则会顺手触发整行的「导航去这个地点」。
+    else if (act === 'xhs') {
+      e.stopPropagation();
+      const it = state.days[di] && state.days[di].items[ii];
+      openXhs(it && it.xhs);
+    }
+    else if (act === 'xhs-sub') {
+      e.stopPropagation();
+      const it = state.days[di] && state.days[di].items[ii];
+      const sb = (it && Array.isArray(it.subs)) ? it.subs[parseInt(el.dataset.sub, 10)] : null;
+      openXhs(sb && sb.xhs);
+    }
     else if (act === 'del-item') removeItem(di, ii);
   });
 
@@ -3452,23 +3585,61 @@ function bindEvents() {
     const del = e.target.closest('[data-sub-del]');
     if (del) { deleteSub(parseInt(del.dataset.subDel, 10)); return; }
     const edit = e.target.closest('[data-sub-edit]');
-    if (edit) { startEditSub(parseInt(edit.dataset.subEdit, 10)); }
+    if (edit) { startEditSub(parseInt(edit.dataset.subEdit, 10)); return; }
+    // 类型按钮：点一下就换，立刻写盘（跟父条目那排一样「点了就算数」）
+    const tp = e.target.closest('[data-sub-type]');
+    if (tp) { setSubType(parseInt(tp.dataset.si, 10), tp.dataset.subType); return; }
+    // 子地点的 📕：直接打开这篇帖子
+    const go = e.target.closest('[data-sub-xhs-go]');
+    if (go) {
+      const s = currentSubs()[parseInt(go.dataset.subXhsGo, 10)];
+      openXhs(s && s.xhs);
+    }
   });
   // 备注是「边打边存到内存、失焦再落盘」：
   //   · 每敲一个字都 commit() 会把整条时间线重绘一遍 —— 手机上肉眼可见地卡，
   //     输入框还会因为列表重渲染而被顶掉焦点（打字打着打着光标跑了）
-  //   · 所以输入只改 subs[si].note；失焦 / 回车 / 关弹窗时由 flushSubNotes() 统一写盘
+  //   · 所以输入只改 subs[si].note；失焦 / 回车 / 关弹窗时由 flushSubFields() 统一写盘
   $('#f-subs').addEventListener('input', (e) => {
     const inp = e.target.closest('[data-sub-note]');
-    if (inp) setSubNote(parseInt(inp.dataset.subNote, 10), inp.value);
+    if (inp) { setSubNote(parseInt(inp.dataset.subNote, 10), inp.value); return; }
+    const xi = e.target.closest('[data-sub-xhs]');
+    if (xi) {
+      setSubXhs(parseInt(xi.dataset.subXhs, 10), xi.value);
+      // 📕 跟着输入走：认得出网址才露出来
+      const go = document.querySelector('[data-sub-xhs-go="' + xi.dataset.subXhs + '"]');
+      if (go) go.hidden = !xhsUrl(xi.value);
+    }
   });
   $('#f-subs').addEventListener('change', (e) => {
-    if (e.target.closest('[data-sub-note]')) flushSubNotes();
+    const xi = e.target.closest('[data-sub-xhs]');
+    // 填了东西却抽不出网址 → 说一声，别让用户以为存上了
+    if (xi && String(xi.value || '').trim() && !xhsUrl(xi.value)) {
+      toast('这段里没找到网址，链接要是 http(s) 开头的');
+    }
+    if (e.target.closest('[data-sub-note]') || xi) flushSubFields();
+  });
+  // 子地点的链接框也在弹窗下半截：手机上键盘弹起会盖住，聚焦后把它顶到看得见的位置
+  $('#f-subs').addEventListener('focusin', (e) => {
+    if (!e.target.closest('[data-sub-xhs]')) return;
+    const el = e.target;
+    setTimeout(() => { try { el.scrollIntoView({ block: 'center', behavior: 'smooth' }); } catch (err) {} }, 300);
   });
   $('#f-subs').addEventListener('keydown', (e) => {
     // 回车 = 打完了（手机键盘上那颗也是回车），收键盘并落盘
     if (e.key === 'Enter' && e.target.closest('[data-sub-note]')) { e.preventDefault(); e.target.blur(); }
   });
+
+  // 父条目的小红书链接：输入时只更新 📕 的显隐，真正写盘在「保存」里
+  $('#f-xhs').addEventListener('input', refreshXhsGo);
+  $('#f-xhs').addEventListener('focus', () => {
+    // 编辑弹窗是 position:fixed，手机上键盘弹起会盖住下半截 —— 顶到看得见的位置
+    setTimeout(() => {
+      const el = $('#f-xhs');
+      if (el) { try { el.scrollIntoView({ block: 'center', behavior: 'smooth' }); } catch (err) {} }
+    }, 300);
+  });
+  $('#btn-xhs-open').addEventListener('click', () => openXhs($('#f-xhs').value));
 
   $('#pp-back').addEventListener('click', closePlacePanel);
   $('#pp-clear').addEventListener('click', () => {
