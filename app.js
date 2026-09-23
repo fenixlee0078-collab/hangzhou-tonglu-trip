@@ -3793,12 +3793,20 @@ function closeShopModal() {
   shopDraft = null;
 }
 async function saveShop() {
+  // 物品名是选填：留空照样能存（渲染时兜底成「待购物品」）。
+  // 但整条一个字段都没填 → 存出来是条纯空记录，没意义，只拦这一种。
   const title = $('#s-title').value.trim();
-  if (!title) { toast('请填写物品名称'); return; }
+  const note = $('#s-note').value.trim();
   const rawXhs = $('#s-xhs').value;
   const xhs = xhsUrl(rawXhs);
   if (String(rawXhs || '').trim() && !xhs) {
     toast('这段文字里没找到网址，请粘小红书「分享 → 复制链接」的完整内容');
+    return;
+  }
+  const hasImg = !!(shopDraft && (shopDraft.imgData || (shopDraft.img && !shopDraft.imgRemoved)));
+  const hasCat = shopCatKey((shopDraft && shopDraft.cat) || '') !== SHOP_UNCATED;
+  if (!title && !note && !xhs && !hasImg && !hasCat) {
+    toast('还没填任何内容，写点什么或选张图再保存');
     return;
   }
 
@@ -3828,10 +3836,10 @@ async function saveShop() {
   const old = (editingShop >= 0) ? (state.shopping || [])[editingShop] : null;
   const rec = {
     id: (old && old.id) || uid('sh'),
-    title: title,
-    note: $('#s-note').value.trim(),
+    note: note,
     done: !!(old && old.done),
   };
+  if (title) rec.title = title;   // 选填：留空就不落这个字段，渲染时兜底成「待购物品」
   if (xhs) rec.xhs = xhs;
   if (imgRel) rec.img = imgRel;
   const cat = shopCatKey((shopDraft && shopDraft.cat) || '');
