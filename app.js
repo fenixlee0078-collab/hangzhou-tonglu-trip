@@ -3404,6 +3404,17 @@ function closeExpModal() { $('#exp-mask').classList.remove('show'); editingExp =
 // 一张手机照片压到能用也有 100KB+，十几张就顶穿天花板；一旦顶穿，页面会直接读不到
 // 整份 data.json —— 表现跟「行程全没了」一模一样（用户已经为空白骨架慌过两次）。
 // 所以图片一律走独立文件：存数据仓的 shop/ 目录，data.json 里只留一个相对路径。
+//
+// 分类（2026-09-23 二期）：添加时可选类型，列表按类型分组、每组可折叠展开。
+const SHOP_CATS = [
+  { k: 'snack',    n: '零食',   e: '🍿' },
+  { k: 'daily',    n: '日用品', e: '🧴' },
+  { k: 'drink',    n: '饮料',   e: '🥤' },
+  { k: 'souvenir', n: '纪念品', e: '🎁' },
+];
+// k 是写进数据里的稳定值（别改，老记录靠它对上）；SHOP_UNCATED 收留没有 cat 的老数据
+const SHOP_UNCATED = 'other';
+const SHOP_CAT_FALLBACK = { k: SHOP_UNCATED, n: '未分类', e: '📦' };
 const SHOP_DIR = 'shop';              // 图片在数据仓里的目录
 const SHOP_MAX_SIDE = 1400;           // 长边上限（全屏放大够清楚，又不至于几百 KB）
 const SHOP_QUALITY = 0.82;            // JPEG 质量
@@ -3537,6 +3548,44 @@ async function shopCompress(file) {
   return { dataUrl: dataUrl, w: w, h: h, bytes: bytes };
 }
 
+// ----- 分类（2026-09-23 二期）-----
+function shopCatKey(k) {
+  const s = String(k || '');
+  for (let i = 0; i < SHOP_CATS.length; i++) if (SHOP_CATS[i].k === s) return s;
+  return SHOP_UNCATED;
+}
+function shopCatMeta(k) {
+  for (let i = 0; i < SHOP_CATS.length; i++) if (SHOP_CATS[i].k === k) return SHOP_CATS[i];
+  return SHOP_CAT_FALLBACK;
+}
+// 折叠状态存 localStorage（按站点命名空间），不写进 data.json：
+// 它是「看的人」的偏好，写进数据会两台设备互相顶掉，还白触发一次云端提交。
+function shopCollapsedCats() {
+  try {
+    let k = 'trip_shop_collapsed';
+    const b = window.__tripBridge;
+    if (b && typeof b.key === 'function') k = b.key(k);
+    const raw = localStorage.getItem(k);
+    const o = raw ? JSON.parse(raw) : null;
+    return (o && typeof o === 'object') ? o : {};
+  } catch (_) { return {}; }
+}
+function saveShopCollapsed(o) {
+  try {
+    let k = 'trip_shop_collapsed';
+    const b = window.__tripBridge;
+    if (b && typeof b.key === 'function') k = b.key(k);
+    localStorage.setItem(k, JSON.stringify(o || {}));
+  } catch (_) {}
+}
+function toggleShopCat(k) {
+  const key = shopCatKey(k);
+  const o = shopCollapsedCats();
+  if (o[key]) delete o[key]; else o[key] = 1;
+  saveShopCollapsed(o);
+  renderShopping();
+}
+
 // ----- 渲染 -----
 function shopItemHTML(s, idx) {
   const img = String(s.img || '');
@@ -3582,11 +3631,37 @@ function renderShopping() {
     return;
   }
   const todo = alive.filter(s => !s.done).length;
-  // 下标必须是 state.shopping 里的原始位置（下面靠 data-shop 回查），所以不能先 filter 再 map
-  wrap.innerHTML = `<div class="shop-count">共 ${alive.length} 件 · 待买 ${todo} 件</div>`
-    + '<div class="shop-items">'
-    + list.map((s, i) => (s && typeof s === 'object' ? shopItemHTML(s, i) : '')).join('')
-    + '</div>';
+  // 按类型分桶：桶里存**原始下标**，不能先 filter 再 map ——
+  // 卡片上是 data-shop="原始下标"，点勾选/编辑都靠它回查 state.shopping，一错位就改到别人头上
+  const buckets = {};
+  list.forEach((s, i) => {
+    if (!s || typeof s !== 'object') return;
+    const k = shopCatKey(s.cat);
+    if (!buckets[k]) buckets[k] = [];
+    buckets[k].push(i);
+  });
+  const closed = shopCollapsedCats();
+  const order = SHOP_CATS.map(c => c.k).concat([SHOP_UNCATED]);
+  let html = '<div class="shop-count">共 ' + alive.length + ' 件 · 待买 ' + todo + ' 件</div>';
+  order.forEach(k => {
+    const idxs = buckets[k];
+    if (!idxs || !idxs.length) return;           // 这一类没东西就不占位置
+    const meta = shopCatMeta(k);
+    const left = idxs.filter(i => !list[i].done).length;
+    const col = !!closed[k];
+    html += '<div class="shop-group' + (col ? ' collapsed' : '') + '" data-cat="' + k + '">'
+      + '<button type="button" class="shop-group-head" data-shop-cat-toggle="' + k + '"'
+      + ' aria-expanded="' + (col ? 'false' : 'true') + '">'
+      + '<span class="shop-group-t">' + meta.e + ' ' + meta.n + '</span>'
+      + '<span class="shop-group-n">' + idxs.length + ' 件 · 待买 ' + left + '</span>'
+      + '<span class="shop-group-chev">⌄</span>'
+      + '</button>'
+      + '<div class="shop-items">'
+      + idxs.map(i => shopItemHTML(list[i], i)).join('')
+      + '</div>'
+      + '</div>';
+  });
+  wrap.innerHTML = html;
   observeShopThumbs();
 }
 // 缩略图懒加载：进视口才去云端取（清单长时不至于一开页面就打几十个请求）
@@ -3671,6 +3746,17 @@ function refreshSXhsGo() {
   if (!inp || !btn) return;
   btn.hidden = !xhsUrl(inp.value);
 }
+// 弹窗里的类型选择：四个胶囊，再点一次已选中的那个 = 取消（回到「未分类」）。
+// 不额外摆一个「不分类」按钮 —— 没打算分类的人不该多一个要点的东西。
+function renderSCats() {
+  const wrap = $('#s-cats');
+  if (!wrap) return;
+  const cur = (shopDraft && shopDraft.cat) || '';
+  wrap.innerHTML = SHOP_CATS.map(c =>
+    '<button type="button" class="shop-cat' + (cur === c.k ? ' on' : '') + '"'
+    + ' data-cat-pick="' + c.k + '" aria-pressed="' + (cur === c.k ? 'true' : 'false') + '">'
+    + c.e + ' ' + c.n + '</button>').join('');
+}
 function openShopModal(idx) {
   editingShop = (typeof idx === 'number' && idx >= 0) ? idx : -1;
   const s = editingShop >= 0 ? (state.shopping || [])[editingShop] : null;
@@ -3678,6 +3764,7 @@ function openShopModal(idx) {
     img: (s && s.img) || '',       // 进弹窗时已有的图（云端路径）
     imgData: '',                   // 新选的图（本地 dataURL，保存时才上传）
     imgRemoved: false,             // 用户点了移除
+    cat: (s && s.cat) || '',       // 选中的类型（'' = 未分类）
   };
   $('#shop-modal-title').textContent = s ? '编辑待购物品' : '添加待购物品';
   $('#s-title').value = (s && s.title) || '';
@@ -3685,6 +3772,7 @@ function openShopModal(idx) {
   $('#s-xhs').value = (s && s.xhs) || '';
   $('#s-del').hidden = !s;
   refreshSXhsGo();
+  renderSCats();
   renderSImgPreview();
   paintSImgState('');
   // 老物品的图可能还没被懒加载过：进弹窗时补一次，否则预览是空的
@@ -3746,6 +3834,8 @@ async function saveShop() {
   };
   if (xhs) rec.xhs = xhs;
   if (imgRel) rec.img = imgRel;
+  const cat = shopCatKey((shopDraft && shopDraft.cat) || '');
+  if (cat !== SHOP_UNCATED) rec.cat = cat;   // 未分类不落字段（老记录本来就没有 cat）
 
   if (!Array.isArray(state.shopping)) state.shopping = [];
   if (editingShop >= 0) state.shopping[editingShop] = rec;
@@ -3777,6 +3867,9 @@ function bindShopEvents() {
   const list = $('#shopList');
   if (list) {
     list.addEventListener('click', (e) => {
+      // 组名：折叠 / 展开这一类。必须排在最前 —— 否则会落到下面的「整行」分支去打开编辑弹窗
+      const gh = e.target.closest('[data-shop-cat-toggle]');
+      if (gh) { e.stopPropagation(); toggleShopCat(gh.dataset.shopCatToggle); return; }
       // 三个热点各自 stopPropagation，免得点图片变成「打开编辑弹窗」
       const xb = e.target.closest('[data-shop-xhs]');
       if (xb) {
@@ -3809,6 +3902,17 @@ function bindShopEvents() {
   if (delBtn) delBtn.addEventListener('click', deleteShop);
   const saveBtn = $('#s-save');
   if (saveBtn) saveBtn.addEventListener('click', saveShop);
+
+  const catWrap = $('#s-cats');
+  if (catWrap) {
+    catWrap.addEventListener('click', (e) => {
+      const cp = e.target.closest('[data-cat-pick]');
+      if (!cp || !shopDraft) return;
+      const k = cp.dataset.catPick;
+      shopDraft.cat = (shopDraft.cat === k) ? '' : k;   // 再点一次已选中的 = 取消
+      renderSCats();
+    });
+  }
 
   const file = $('#s-file');
   const pick = $('#s-img-add');
