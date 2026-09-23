@@ -9,7 +9,7 @@
   <meta name="referrer" content="no-referrer-when-downgrade" />
   <title>杭州桐庐 3天2夜</title>
   <link rel="stylesheet" href="theme.css?v=2" />
-  <link rel="stylesheet" href="style.css?v=17" />
+  <link rel="stylesheet" href="style.css?v=18" />
 </head>
 <body>
 
@@ -87,6 +87,19 @@
       <div class="exp-days" id="expDays"></div>
       <button class="addbtn block" id="btn-add-exp">＋ 记一笔</button>
     </section>
+    <!-- ============ 购物清单 ============
+         页面最下方：待购物品清单。每件可配一张图（点图全屏放大）+ 一条小红书推荐帖（点 📕 开 App）。
+         图片存在数据仓的 shop/ 目录 —— 不放进 data.json，那份文件超 1MB 就整份读不回来。 -->
+    <section class="wrap sec" id="shopSec">
+      <div class="sec-head">
+        <h2>购物清单</h2>
+        <span class="en">Shopping</span>
+        <span class="tip-inline">点图放大 · 点条目编辑</span>
+      </div>
+      <div class="shop-list" id="shopList"></div>
+      <button class="addbtn block" id="btn-add-shop">＋ 添加待购物品</button>
+    </section>
+
 
     <footer class="wrap foot" id="foot">
       <div class="mark" id="footerMark">下一站 · 杭州桐庐</div>
@@ -427,6 +440,42 @@
     </div>
   </div>
 
+  <!-- ============ 购物清单：新增 / 编辑 ============
+       图片不放进 data.json（那份文件有 1MB 读取上限），保存时先传到数据仓的 shop/ 目录，
+       再把相对路径写进清单 —— 所以没连云端时不给选图。 -->
+  <div class="modal-mask" id="shop-mask">
+    <div class="modal">
+      <div class="modal-head"><h3 id="shop-modal-title">添加待购物品</h3><button class="modal-close" id="shop-close">✕</button></div>
+      <div class="modal-body">
+        <div class="field-row"><label>物品</label><input id="s-title" type="text" placeholder="如：防晒霜 / 转换插头 / 伴手礼" /></div>
+        <div class="field-row">
+          <label>图片 <span class="lbl-hint">可拍照或从相册选，列表里点图能放大</span></label>
+          <div class="shop-img-row">
+            <input type="file" id="s-file" accept="image/*" hidden />
+            <button type="button" class="shop-img-add" id="s-img-add">🖼 选择图片</button>
+            <div class="shop-img-prev" id="s-img-prev" hidden>
+              <img id="s-img-thumb" alt="待购物品图片" />
+              <button type="button" class="shop-img-del" id="s-img-del" title="移除图片">✕</button>
+            </div>
+          </div>
+          <div class="shop-img-state" id="s-img-state"></div>
+        </div>
+        <div class="field-row">
+          <label>小红书推荐 <span class="lbl-hint">粘贴帖子链接，点 📕 直接打开 App</span></label>
+          <div class="xhs-row">
+            <input id="s-xhs" type="text" inputmode="url" maxlength="500" placeholder="粘贴小红书帖子链接（选填）" />
+            <button type="button" class="xhs-go" id="s-xhs-go" title="打开小红书看这篇" hidden>📕</button>
+          </div>
+        </div>
+        <div class="field-row"><label>备注</label><textarea id="s-note" rows="2" placeholder="尺码 / 数量 / 去哪儿买（选填）"></textarea></div>
+      </div>
+      <div class="modal-foot">
+        <button class="mini warn" id="s-del" hidden>🗑 删除</button>
+        <button class="btn-primary" id="s-save">保存</button>
+      </div>
+    </div>
+  </div>
+
   <!-- ============ 地点搜索面板（全屏） ============
        为什么单独开一个面板：编辑弹窗是 fixed 定位，键盘弹起时被盖住的下半部分
        永远够不着（页面滚动也没用），而改成顶部对齐又会让标题栏跑出屏幕。
@@ -448,10 +497,18 @@
     <div class="pp-list" id="pp-list"></div>
   </div>
 
+  <!-- ============ 图片放大（灯箱）============
+       点购物清单里的缩略图全屏看大图；点任意处或右上角 ✕ 关掉。
+       z-index 400 是为了压过编辑弹窗（200）和地点面板（300）。 -->
+  <div class="img-view-mask" id="img-view-mask">
+    <img id="img-view-img" alt="放大的图片" />
+    <button type="button" class="img-view-close" id="img-view-close" aria-label="关闭">✕</button>
+  </div>
+
   <!-- 静态版：没有 Node 后端，socket.io 由 static-bridge.js 提供的本地替身接管。
        顺序要紧：site-config.js（站点配置）→ static-bridge.js（先定义 io/fetch 替身）→ app.js -->
   <script src="site-config.js?v=4"></script>
   <script src="static-bridge.js?v=11"></script>
-  <script src="app.js?v=23"></script>
+  <script src="app.js?v=24"></script>
 </body>
 </html>
