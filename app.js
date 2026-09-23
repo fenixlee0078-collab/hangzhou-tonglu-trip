@@ -319,6 +319,7 @@ function render() {
   renderTimeline();
   renderFooter();
   renderExpenses();
+  renderShopping();
   renderNext();
 }
 
@@ -3394,6 +3395,474 @@ function deleteExp() {
 }
 function closeExpModal() { $('#exp-mask').classList.remove('show'); editingExp = null; }
 
+// ===== 购物清单（2026-09-23）=====
+// 页面最下方一个「待购物品」清单：每件可以配一张图 + 一条小红书推荐帖；
+// 图点一下全屏放大，📕 点一下进小红书 App 看那篇帖子。
+//
+// 🔴 图片为什么不塞进 data.json：桥读数据走 GitHub contents API（static-bridge.js），
+// 那个接口**单文件超过 1MB 就拒绝返回**（403 "This API returns blobs up to 1 MB in size"）。
+// 一张手机照片压到能用也有 100KB+，十几张就顶穿天花板；一旦顶穿，页面会直接读不到
+// 整份 data.json —— 表现跟「行程全没了」一模一样（用户已经为空白骨架慌过两次）。
+// 所以图片一律走独立文件：存数据仓的 shop/ 目录，data.json 里只留一个相对路径。
+const SHOP_DIR = 'shop';              // 图片在数据仓里的目录
+const SHOP_MAX_SIDE = 1400;           // 长边上限（全屏放大够清楚，又不至于几百 KB）
+const SHOP_QUALITY = 0.82;            // JPEG 质量
+const shopImgCache = new Map();       // 'shop/xx.jpg' → dataURL（本次会话内复用，不重复下载）
+let editingShop = -1;                 // 正在编辑的物品下标，-1 = 新增
+let shopDraft = null;                 // 弹窗里的草稿（点保存才写进 state）
+let shopImgObserver = null;           // 缩略图懒加载
+
+// 数据令牌与数据仓名都放在「按站点命名空间」的 localStorage 键里；
+// 桥自己暴露了 key() 用来算这个键名 —— 就地复用，别另存一份（两边会不一致）。
+function shopToken() {
+  let k = 'trip_gh_token';
+  try {
+    const b = window.__tripBridge;
+    if (b && typeof b.key === 'function') k = b.key('trip_gh_token');
+  } catch (_) {}
+  try { return String(localStorage.getItem(k) || '').trim(); } catch (_) { return ''; }
+}
+function shopRepo() {
+  const c = window.TRIP_SITE_CONFIG || {};
+  return String(c.dataRepo || '').replace(/^\/+|\/+$/g, '');
+}
+function shopCloudReady() { return !!(shopToken() && shopRepo()); }
+function shopApiUrl(rel) {
+  return 'https://api.github.com/repos/' + shopRepo() + '/contents/' + rel;
+}
+function shopHeaders() {
+  return {
+    Authorization: 'Bearer ' + shopToken(),
+    Accept: 'application/vnd.github+json',
+    'X-GitHub-Api-Version': '2022-11-28',
+  };
+}
+async function shopGhError(r) {
+  let msg = 'HTTP ' + r.status;
+  try { const j = await r.json(); if (j && j.message) msg = j.message; } catch (_) {}
+  return msg;
+}
+// 读一张图（contents 接口给 base64 + sha；sha 是删除时必须带的）
+async function shopGetImage(rel) {
+  const r = await fetchWithTimeout(shopApiUrl(rel) + '?t=' + Date.now(),
+    { headers: shopHeaders(), cache: 'no-store' }, 25000);
+  if (!r.ok) throw new Error(await shopGhError(r));
+  const j = await r.json();
+  if (!j || !j.content) throw new Error('云端这个文件没有内容');
+  return { b64: String(j.content).replace(/[\r\n\s]/g, ''), sha: j.sha || '' };
+}
+async function shopPutImage(rel, dataUrl) {
+  const b64 = String(dataUrl || '').split(',')[1] || '';
+  if (!b64) throw new Error('图片内容为空');
+  const r = await fetchWithTimeout(shopApiUrl(rel), {
+    method: 'PUT',
+    headers: Object.assign({ 'Content-Type': 'application/json' }, shopHeaders()),
+    body: JSON.stringify({ message: '购物清单图片：' + rel.split('/').pop(), content: b64 }),
+  }, 60000);
+  if (!r.ok) throw new Error(await shopGhError(r));
+  return true;
+}
+async function shopDelImage(rel) {
+  if (!rel || !shopCloudReady()) return false;
+  try {
+    const info = await shopGetImage(rel);        // 删除必须带 sha，先取一次
+    const r = await fetchWithTimeout(shopApiUrl(rel), {
+      method: 'DELETE',
+      headers: Object.assign({ 'Content-Type': 'application/json' }, shopHeaders()),
+      body: JSON.stringify({ message: '购物清单图片删除：' + rel.split('/').pop(), sha: info.sha }),
+    }, 25000);
+    return r.ok;
+  } catch (_) {
+    // 删图失败不影响数据正确性（清单里已经不再引用它），只是仓里留个孤儿文件 —— 别打断用户
+    return false;
+  }
+}
+
+// 压缩：手机直出照片动辄 4~8MB，必须压。长边超上限就等比缩，PNG 透明区要铺白底（JPEG 无透明通道）
+// 🔴 一定不能只靠 .catch(viaImg) 兜底。2026-09-23 实测：有些环境（无头 Chrome 是铁证）
+//   里 createImageBitmap 会**既不成功也不失败**地一直挂着 —— 挂住比失败更糟，
+//   .catch 永远不触发，用户就永远停在「正在压缩…」，连个报错都没有。
+//   所以这里加个超时：超时改用 <img> 解码（丢 EXIF 摆正，但总比卡死强）。
+const SHOP_BITMAP_TIMEOUT = 4000;
+function shopBitmap(file) {
+  const viaImg = () => new Promise((res, rej) => {
+    const url = URL.createObjectURL(file);
+    const im = new Image();
+    im.onload = () => { URL.revokeObjectURL(url); res(im); };
+    im.onerror = () => { URL.revokeObjectURL(url); rej(new Error('这张图读不出来')); };
+    im.src = url;
+  });
+  if (window.createImageBitmap) {
+    try {
+      // imageOrientation：手机竖拍的照片靠它才不会躺倒
+      const cib = createImageBitmap(file, { imageOrientation: 'from-image' });
+      return new Promise((resolve, reject) => {
+        let settled = false;
+        const timer = setTimeout(() => {
+          if (settled) return;
+          settled = true;
+          viaImg().then(resolve, reject);      // 挂住了 → 退回 <img> 解码
+        }, SHOP_BITMAP_TIMEOUT);
+        cib.then((b) => {
+          if (settled) { try { b.close(); } catch (_) {} return; }   // 兜底已经接手了，别泄漏位图
+          settled = true; clearTimeout(timer); resolve(b);
+        }, () => {
+          if (settled) return;                 // 失败也走同一个兜底，避免重复解码
+          settled = true; clearTimeout(timer);
+          viaImg().then(resolve, reject);
+        });
+      });
+    } catch (_) {}
+  }
+  return viaImg();
+}
+async function shopCompress(file) {
+  const bmp = await shopBitmap(file);
+  const w0 = bmp.width || bmp.naturalWidth || 0;
+  const h0 = bmp.height || bmp.naturalHeight || 0;
+  if (!w0 || !h0) throw new Error('读不到图片尺寸');
+  const scale = Math.min(1, SHOP_MAX_SIDE / Math.max(w0, h0));
+  const w = Math.max(1, Math.round(w0 * scale));
+  const h = Math.max(1, Math.round(h0 * scale));
+  const cv = document.createElement('canvas');
+  cv.width = w; cv.height = h;
+  const ctx = cv.getContext('2d');
+  ctx.fillStyle = '#fff';
+  ctx.fillRect(0, 0, w, h);
+  ctx.drawImage(bmp, 0, 0, w, h);
+  if (bmp.close) { try { bmp.close(); } catch (_) {} }
+  const dataUrl = cv.toDataURL('image/jpeg', SHOP_QUALITY);
+  const head = 'data:image/jpeg;base64,';
+  const bytes = Math.round((dataUrl.length - head.length) * 3 / 4);
+  return { dataUrl: dataUrl, w: w, h: h, bytes: bytes };
+}
+
+// ----- 渲染 -----
+function shopItemHTML(s, idx) {
+  const img = String(s.img || '');
+  const xhs = xhsUrl(s.xhs);
+  const done = !!s.done;
+  const note = String(s.note || '').trim();
+  const label = escapeHtml(s.title || '待购物品');
+  // 缩略图：src 先留空，进视口时 shopLoadThumb() 才去云端取。
+  // 🔴 data-shop-src 必须挂在 .shop-thumb（那个 64×64 的盒子）上，不能挂在 img 上：
+  //   图没取回来之前 img 是 display:none，零面积的元素永远不会触发 IntersectionObserver
+  //   → 图永远算「没进视口」→ 永远不加载。2026-09-23 真机探针逮到的（结构断言看不出来）。
+  let thumb = '';
+  if (img) {
+    thumb = '<div class="shop-thumb" data-shop-img="' + idx + '" data-shop-src="' + escapeHtml(img) + '" title="点击放大">'
+      + '<img alt="' + label + '的图" />'
+      + '<span class="shop-thumb-ph">🖼</span>'
+      + '</div>';
+  }
+  // 用数组 join 拼，不用嵌套模板字符串 —— 测试侧的 fnBody() 靠大括号配对切函数体，
+  // 模板字符串里再嵌一层反引号会让它提前收尾（这个坑值得为后来改的人留一句）
+  return [
+    '<div class="shop-item' + (done ? ' done' : '') + '" data-shop="' + idx + '">',
+    '<button type="button" class="shop-check' + (done ? ' on' : '') + '" data-shop-check="' + idx + '"'
+      + ' aria-label="' + (done ? '标为还没买' : '标为已买到') + '">' + (done ? '✓' : '') + '</button>',
+    thumb,
+    '<div class="shop-main">',
+    '<div class="shop-name">' + label + '</div>',
+    note ? '<div class="shop-note">' + escapeHtml(note) + '</div>' : '',
+    xhs ? '<button type="button" class="xhs-btn" data-shop-xhs="' + idx + '">📕 小红书推荐</button>' : '',
+    '</div>',
+    '<span class="shop-chev">›</span>',
+    '</div>',
+  ].join('');
+}
+function renderShopping() {
+  const wrap = $('#shopList');
+  if (!wrap) return;
+  const list = state.shopping || [];
+  const alive = list.filter(s => s && typeof s === 'object');
+  if (!alive.length) {
+    wrap.innerHTML = '<div class="shop-empty">还没有待购物品。点下方「＋ 添加待购物品」——'
+      + '每件都能配一张图（点图放大）和一条小红书推荐帖（点 📕 打开 App）</div>';
+    return;
+  }
+  const todo = alive.filter(s => !s.done).length;
+  // 下标必须是 state.shopping 里的原始位置（下面靠 data-shop 回查），所以不能先 filter 再 map
+  wrap.innerHTML = `<div class="shop-count">共 ${alive.length} 件 · 待买 ${todo} 件</div>`
+    + '<div class="shop-items">'
+    + list.map((s, i) => (s && typeof s === 'object' ? shopItemHTML(s, i) : '')).join('')
+    + '</div>';
+  observeShopThumbs();
+}
+// 缩略图懒加载：进视口才去云端取（清单长时不至于一开页面就打几十个请求）
+// 观察的是 .shop-thumb 盒子（有真实 64×64 面积），不是里面那张 display:none 的 img
+function observeShopThumbs() {
+  const els = document.querySelectorAll('.shop-thumb[data-shop-src]');
+  if (!els.length) return;
+  if (!('IntersectionObserver' in window)) { els.forEach(shopLoadThumb); return; }
+  if (!shopImgObserver) {
+    shopImgObserver = new IntersectionObserver((ents) => {
+      ents.forEach(en => {
+        if (!en.isIntersecting) return;
+        shopImgObserver.unobserve(en.target);
+        shopLoadThumb(en.target);
+      });
+    }, { rootMargin: '240px' });
+  }
+  els.forEach(el => shopImgObserver.observe(el));
+}
+function shopLoadThumb(boxEl) {
+  const rel = boxEl.getAttribute('data-shop-src');
+  if (!rel) return;
+  boxEl.removeAttribute('data-shop-src');        // 先摘掉标记，避免重复触发
+  const imgEl = boxEl.querySelector('img');
+  if (!imgEl) return;
+  const hit = shopImgCache.get(rel);
+  if (hit) { imgEl.src = hit; boxEl.classList.add('has'); return; }
+  shopGetImage(rel).then((info) => {
+    const url = 'data:image/jpeg;base64,' + info.b64;
+    shopImgCache.set(rel, url);
+    imgEl.src = url;
+    boxEl.classList.add('has');
+  }).catch(() => {
+    boxEl.classList.add('failed');
+    imgEl.alt = '图片没读出来（网络或令牌问题）';
+  });
+}
+
+// ----- 图片放大（灯箱）-----
+function openShopImgView(rel) {
+  const url = shopImgCache.get(rel) || '';
+  if (!url) { toast('这张图还在加载，稍等一秒'); return; }
+  const im = $('#img-view-img');
+  if (!im) return;
+  im.src = url;
+  clearTextSelection();
+  $('#img-view-mask').classList.add('show');
+}
+function closeShopImgView() {
+  const m = $('#img-view-mask');
+  if (!m) return;
+  m.classList.remove('show');
+  const im = $('#img-view-img');
+  if (im) im.removeAttribute('src');
+}
+
+// ----- 弹窗 -----
+function paintSImgState(text) {
+  const st = $('#s-img-state');
+  if (st) st.textContent = text || '';
+}
+function renderSImgPreview() {
+  const wrap = $('#s-img-prev');
+  const img = $('#s-img-thumb');
+  const add = $('#s-img-add');
+  if (!wrap || !img || !add) return;
+  let url = '';
+  if (shopDraft && shopDraft.imgData) url = shopDraft.imgData;
+  else if (shopDraft && shopDraft.img && !shopDraft.imgRemoved) url = shopImgCache.get(shopDraft.img) || '';
+  if (url) {
+    img.src = url;
+    wrap.hidden = false;
+    add.hidden = true;
+  } else {
+    img.removeAttribute('src');
+    wrap.hidden = true;
+    add.hidden = false;
+  }
+}
+function refreshSXhsGo() {
+  const inp = $('#s-xhs'), btn = $('#s-xhs-go');
+  if (!inp || !btn) return;
+  btn.hidden = !xhsUrl(inp.value);
+}
+function openShopModal(idx) {
+  editingShop = (typeof idx === 'number' && idx >= 0) ? idx : -1;
+  const s = editingShop >= 0 ? (state.shopping || [])[editingShop] : null;
+  shopDraft = {
+    img: (s && s.img) || '',       // 进弹窗时已有的图（云端路径）
+    imgData: '',                   // 新选的图（本地 dataURL，保存时才上传）
+    imgRemoved: false,             // 用户点了移除
+  };
+  $('#shop-modal-title').textContent = s ? '编辑待购物品' : '添加待购物品';
+  $('#s-title').value = (s && s.title) || '';
+  $('#s-note').value = (s && s.note) || '';
+  $('#s-xhs').value = (s && s.xhs) || '';
+  $('#s-del').hidden = !s;
+  refreshSXhsGo();
+  renderSImgPreview();
+  paintSImgState('');
+  // 老物品的图可能还没被懒加载过：进弹窗时补一次，否则预览是空的
+  if (shopDraft.img && !shopImgCache.has(shopDraft.img)) {
+    const rel = shopDraft.img;
+    shopGetImage(rel).then((info) => {
+      shopImgCache.set(rel, 'data:image/jpeg;base64,' + info.b64);
+      if (shopDraft && shopDraft.img === rel) renderSImgPreview();
+    }).catch(() => {});
+  }
+  clearTextSelection();
+  $('#shop-mask').classList.add('show');
+}
+function closeShopModal() {
+  const m = $('#shop-mask');
+  if (m) m.classList.remove('show');
+  editingShop = -1;
+  shopDraft = null;
+}
+async function saveShop() {
+  const title = $('#s-title').value.trim();
+  if (!title) { toast('请填写物品名称'); return; }
+  const rawXhs = $('#s-xhs').value;
+  const xhs = xhsUrl(rawXhs);
+  if (String(rawXhs || '').trim() && !xhs) {
+    toast('这段文字里没找到网址，请粘小红书「分享 → 复制链接」的完整内容');
+    return;
+  }
+
+  let imgRel = (shopDraft && shopDraft.img) || '';
+  // 新选的图先传云端，成功了再落数据 —— 反过来会存出一条指向不存在图片的记录
+  if (shopDraft && shopDraft.imgData) {
+    if (!shopCloudReady()) { toast('图片要存到你的私有数据仓，先点页脚「☁️ 云端同步」连上'); return; }
+    const btn = $('#s-save');
+    const oldTxt = btn.textContent;
+    btn.disabled = true; btn.textContent = '上传图片…';
+    try {
+      const rel = SHOP_DIR + '/' + uid('sh') + '.jpg';
+      await shopPutImage(rel, shopDraft.imgData);
+      imgRel = rel;
+      shopImgCache.set(rel, shopDraft.imgData);
+    } catch (e) {
+      btn.disabled = false; btn.textContent = oldTxt;
+      toast('图片没传上去：' + ((e && e.message) || e));
+      return;
+    }
+    btn.disabled = false; btn.textContent = oldTxt;
+  } else if (shopDraft && shopDraft.imgRemoved) {
+    imgRel = '';
+  }
+
+  const prevImg = (shopDraft && shopDraft.img) || '';
+  const old = (editingShop >= 0) ? (state.shopping || [])[editingShop] : null;
+  const rec = {
+    id: (old && old.id) || uid('sh'),
+    title: title,
+    note: $('#s-note').value.trim(),
+    done: !!(old && old.done),
+  };
+  if (xhs) rec.xhs = xhs;
+  if (imgRel) rec.img = imgRel;
+
+  if (!Array.isArray(state.shopping)) state.shopping = [];
+  if (editingShop >= 0) state.shopping[editingShop] = rec;
+  else state.shopping.push(rec);
+
+  commit();
+  closeShopModal();
+  // 换图 / 移除后把旧图从仓里清掉（失败不提示：清单已不引用它，不影响使用）
+  if (prevImg && prevImg !== imgRel) shopDelImage(prevImg);
+}
+function deleteShop() {
+  if (editingShop < 0) return;
+  const s = (state.shopping || [])[editingShop];
+  const img = s && s.img;
+  state.shopping.splice(editingShop, 1);
+  commit();
+  closeShopModal();
+  if (img) shopDelImage(img);
+}
+function toggleShopDone(idx) {
+  const s = (state.shopping || [])[idx];
+  if (!s) return;
+  s.done = !s.done;
+  commit();
+}
+
+// ----- 事件 -----
+function bindShopEvents() {
+  const list = $('#shopList');
+  if (list) {
+    list.addEventListener('click', (e) => {
+      // 三个热点各自 stopPropagation，免得点图片变成「打开编辑弹窗」
+      const xb = e.target.closest('[data-shop-xhs]');
+      if (xb) {
+        e.stopPropagation();
+        const s = (state.shopping || [])[parseInt(xb.dataset.shopXhs, 10)];
+        if (s) openXhs(s.xhs);
+        return;
+      }
+      const cb = e.target.closest('[data-shop-check]');
+      if (cb) { e.stopPropagation(); toggleShopDone(parseInt(cb.dataset.shopCheck, 10)); return; }
+      const th = e.target.closest('[data-shop-img]');
+      if (th) {
+        e.stopPropagation();
+        const s = (state.shopping || [])[parseInt(th.dataset.shopImg, 10)];
+        if (s && s.img) openShopImgView(s.img);
+        return;
+      }
+      const row = e.target.closest('[data-shop]');
+      if (row) openShopModal(parseInt(row.dataset.shop, 10));
+    });
+  }
+
+  const addBtn = $('#btn-add-shop');
+  if (addBtn) addBtn.addEventListener('click', () => openShopModal(-1));
+  const closeBtn = $('#shop-close');
+  if (closeBtn) closeBtn.addEventListener('click', closeShopModal);
+  const mask = $('#shop-mask');
+  if (mask) mask.addEventListener('click', (e) => { if (e.target === mask) closeShopModal(); });
+  const delBtn = $('#s-del');
+  if (delBtn) delBtn.addEventListener('click', deleteShop);
+  const saveBtn = $('#s-save');
+  if (saveBtn) saveBtn.addEventListener('click', saveShop);
+
+  const file = $('#s-file');
+  const pick = $('#s-img-add');
+  if (pick) {
+    pick.addEventListener('click', () => {
+      if (!shopCloudReady()) { toast('图片要存到你的私有数据仓，先点页脚「☁️ 云端同步」连上'); return; }
+      if (file) file.click();
+    });
+  }
+  if (file) {
+    file.addEventListener('change', async (e) => {
+      const f = e.target.files && e.target.files[0];
+      e.target.value = '';                        // 清掉，同一张图还能重选
+      if (!f || !shopDraft) return;
+      paintSImgState('正在压缩…');
+      try {
+        const out = await shopCompress(f);
+        shopDraft.imgData = out.dataUrl;
+        shopDraft.imgRemoved = false;
+        renderSImgPreview();
+        paintSImgState(`新选的图 ${out.w}×${out.h} · 约 ${Math.max(1, Math.round(out.bytes / 1024))}KB，点「保存」后上传`);
+      } catch (err) {
+        paintSImgState('');
+        toast('这张图处理不了：' + ((err && err.message) || err));
+      }
+    });
+  }
+  const rmImg = $('#s-img-del');
+  if (rmImg) {
+    rmImg.addEventListener('click', () => {
+      if (!shopDraft) return;
+      shopDraft.imgData = '';
+      shopDraft.imgRemoved = true;
+      renderSImgPreview();
+      paintSImgState('保存后这张图会被移除');
+    });
+  }
+
+  const xhsInp = $('#s-xhs');
+  if (xhsInp) {
+    xhsInp.addEventListener('input', refreshSXhsGo);
+    xhsInp.addEventListener('focusin', () => {
+      setTimeout(() => { try { xhsInp.scrollIntoView({ block: 'center', behavior: 'smooth' }); } catch (_) {} }, 250);
+    });
+  }
+  const xhsGo = $('#s-xhs-go');
+  if (xhsGo) xhsGo.addEventListener('click', () => openXhs($('#s-xhs').value));
+
+  const vm = $('#img-view-mask');
+  if (vm) vm.addEventListener('click', closeShopImgView);
+  const vc = $('#img-view-close');
+  if (vc) vc.addEventListener('click', (e) => { e.stopPropagation(); closeShopImgView(); });
+}
+
 // ===== 昵称 =====
 function openNameModal() { $('#n-name').value = myName; $('#name-mask').classList.add('show'); }
 function saveName() {
@@ -3690,6 +4159,7 @@ function bindEvents() {
 }
 
 bindEvents();
+bindShopEvents();
 initLongPressEdit();
 initNoSelect();
 // 启动即拉行程级配置（海内外地图、城市名、搜索中心）
