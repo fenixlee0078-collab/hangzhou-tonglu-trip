@@ -19,6 +19,9 @@ const SORT_SVG = '<svg width="13" height="13" viewBox="0 0 16 16"><path d="M5 3.
 const UP_SVG = '<svg width="15" height="15" viewBox="0 0 16 16"><path d="M8 12.5 V4 M8 4 L4.6 7.4 M8 4 L11.4 7.4" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></svg>';
 const DOWN_SVG = '<svg width="15" height="15" viewBox="0 0 16 16"><path d="M8 3.5 V12 M8 12 L4.6 8.6 M8 12 L11.4 8.6" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></svg>';
 const EXP_CATS = ['交通', '住宿', '餐饮', '门票', '其他'];
+// 费用条目按类型分组时组名前的图标（2026-09-24）。键必须与 EXP_CATS 里的字符串一模一样，
+// 组名直接用分类名本身（不像购物清单那样另起一套 k），因为费用分类本来就是写进数据的中文。
+const EXP_CAT_EMOJI = { '交通': '🚕', '住宿': '🏨', '餐饮': '🍜', '门票': '🎫', '其他': '📦' };
 
 // ===== 币种：海外行程记费用要选币种（2026-09-18）=====
 // 🔴 结算永远只用人民币：expense.amount 就是人民币金额，全站的汇总/人均/结算都只认它。
@@ -801,7 +804,73 @@ function renderExpenses() {
 
   // 费用不再按日期分组：日期一栏已删（用户 2026-09-18「费用不用填日期，完全多此一举」）。
   // 历史数据里残留的费用日期字段保留在文件里不动，只是不再读、不再显示 → 零迁移。
-  daysWrap.innerHTML = `<div class="exp-list">${expenses.map((e, idx) => expItemHTML(e, idx)).join('')}</div>`;
+  // 2026-09-24 第十六轮：改按「类型」分组，组名可点折叠展开（跟购物清单一个路数）。
+  daysWrap.innerHTML = `<div class="exp-list">${expGroupsHTML(expenses)}</div>`;
+}
+
+// 费用条目按类型分组（2026-09-24 第十六轮）。
+// 🔴 桶里存的是**全局下标**，不是条目本身：卡片上的 data-idx 靠它回查 state.expenses，
+//    一旦「优化」成先 filter 再 map，下标就错位，点「编辑 / 删除」会作用到别的一笔上。
+function expGroupsHTML(expenses) {
+  const buckets = {};
+  expenses.forEach((e, i) => {
+    const k = expCatKey(e && e.category);
+    if (!buckets[k]) buckets[k] = [];
+    buckets[k].push(i);
+  });
+  const closed = expCollapsedCats();
+  let html = '';
+  EXP_CATS.forEach(cat => {
+    const idxs = buckets[cat];
+    if (!idxs || !idxs.length) return;           // 这一类没记过就不占位置，不留空组
+    const sum = idxs.reduce((s, i) => s + (Number(expenses[i] && expenses[i].amount) || 0), 0);
+    const col = !!closed[cat];
+    html += '<div class="exp-group' + (col ? ' collapsed' : '') + '" data-exp-cat="' + escapeHtml(cat) + '">'
+      + '<button type="button" class="exp-group-head" data-exp-cat-toggle="' + escapeHtml(cat) + '"'
+      + ' aria-expanded="' + (col ? 'false' : 'true') + '">'
+      + '<span class="exp-group-t">' + (EXP_CAT_EMOJI[cat] || '📦') + ' ' + escapeHtml(cat) + '</span>'
+      + '<span class="exp-group-n">' + idxs.length + ' 笔 · ¥' + sum.toFixed(2) + '</span>'
+      + '<span class="exp-group-chev">⌄</span>'
+      + '</button>'
+      + '<div class="exp-items">' + idxs.map(i => expItemHTML(expenses[i], i)).join('') + '</div>'
+      + '</div>';
+  });
+  return html;
+}
+
+// 分类名归一：万一老数据里有不在 EXP_CATS 里的分类，统一并进「其他」，
+// 免得冒出一个没有配色样式的野生组名。
+function expCatKey(c) {
+  const s = String(c || '');
+  return EXP_CATS.indexOf(s) >= 0 ? s : '其他';
+}
+
+// 折叠状态存 localStorage（按站点命名空间），不写进 data.json：
+// 它是「看的人」的偏好，写进数据会两台设备互相顶掉，还白触发一次云端提交。
+function expCollapsedCats() {
+  try {
+    let k = 'trip_exp_collapsed';
+    const b = window.__tripBridge;
+    if (b && typeof b.key === 'function') k = b.key(k);
+    const raw = localStorage.getItem(k);
+    const o = raw ? JSON.parse(raw) : null;
+    return (o && typeof o === 'object') ? o : {};
+  } catch (_) { return {}; }
+}
+function saveExpCollapsed(o) {
+  try {
+    let k = 'trip_exp_collapsed';
+    const b = window.__tripBridge;
+    if (b && typeof b.key === 'function') k = b.key(k);
+    localStorage.setItem(k, JSON.stringify(o || {}));
+  } catch (_) {}
+}
+function toggleExpCat(k) {
+  const key = expCatKey(k);
+  const o = expCollapsedCats();
+  if (o[key]) delete o[key]; else o[key] = 1;
+  saveExpCollapsed(o);
+  renderExpenses();
 }
 
 function expItemHTML(e, idx) {
@@ -4072,6 +4141,9 @@ function bindEvents() {
   });
 
   $('#expDays').addEventListener('click', (e) => {
+    // 组头先判：它整行是按钮，落在 .exp-item 之外，但顺序反了就会先撞到下面的 data-act 分支
+    const gh = e.target.closest('[data-exp-cat-toggle]');
+    if (gh) { toggleExpCat(gh.dataset.expCatToggle); return; }
     const el = e.target.closest('[data-act]');
     if (!el || el.dataset.act !== 'edit-exp') return;
     openExpModal(parseInt(el.dataset.idx, 10));
