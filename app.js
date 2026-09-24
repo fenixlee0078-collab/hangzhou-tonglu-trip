@@ -19,6 +19,9 @@ const SORT_SVG = '<svg width="13" height="13" viewBox="0 0 16 16"><path d="M5 3.
 const UP_SVG = '<svg width="15" height="15" viewBox="0 0 16 16"><path d="M8 12.5 V4 M8 4 L4.6 7.4 M8 4 L11.4 7.4" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></svg>';
 const DOWN_SVG = '<svg width="15" height="15" viewBox="0 0 16 16"><path d="M8 3.5 V12 M8 12 L4.6 8.6 M8 12 L11.4 8.6" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></svg>';
 const EXP_CATS = ['交通', '住宿', '餐饮', '门票', '其他'];
+// 费用条目按类型分组时组名前的图标（2026-09-24）。键必须与 EXP_CATS 里的字符串一模一样，
+// 组名直接用分类名本身（不像购物清单那样另起一套 k），因为费用分类本来就是写进数据的中文。
+const EXP_CAT_EMOJI = { '交通': '🚕', '住宿': '🏨', '餐饮': '🍜', '门票': '🎫', '其他': '📦' };
 
 // ===== 币种：海外行程记费用要选币种（2026-09-18）=====
 // 🔴 结算永远只用人民币：expense.amount 就是人民币金额，全站的汇总/人均/结算都只认它。
@@ -801,7 +804,73 @@ function renderExpenses() {
 
   // 费用不再按日期分组：日期一栏已删（用户 2026-09-18「费用不用填日期，完全多此一举」）。
   // 历史数据里残留的费用日期字段保留在文件里不动，只是不再读、不再显示 → 零迁移。
-  daysWrap.innerHTML = `<div class="exp-list">${expenses.map((e, idx) => expItemHTML(e, idx)).join('')}</div>`;
+  // 2026-09-24 第十六轮：改按「类型」分组，组名可点折叠展开（跟购物清单一个路数）。
+  daysWrap.innerHTML = `<div class="exp-list">${expGroupsHTML(expenses)}</div>`;
+}
+
+// 费用条目按类型分组（2026-09-24 第十六轮）。
+// 🔴 桶里存的是**全局下标**，不是条目本身：卡片上的 data-idx 靠它回查 state.expenses，
+//    一旦「优化」成先 filter 再 map，下标就错位，点「编辑 / 删除」会作用到别的一笔上。
+function expGroupsHTML(expenses) {
+  const buckets = {};
+  expenses.forEach((e, i) => {
+    const k = expCatKey(e && e.category);
+    if (!buckets[k]) buckets[k] = [];
+    buckets[k].push(i);
+  });
+  const closed = expCollapsedCats();
+  let html = '';
+  EXP_CATS.forEach(cat => {
+    const idxs = buckets[cat];
+    if (!idxs || !idxs.length) return;           // 这一类没记过就不占位置，不留空组
+    const sum = idxs.reduce((s, i) => s + (Number(expenses[i] && expenses[i].amount) || 0), 0);
+    const col = !!closed[cat];
+    html += '<div class="exp-group' + (col ? ' collapsed' : '') + '" data-exp-cat="' + escapeHtml(cat) + '">'
+      + '<button type="button" class="exp-group-head" data-exp-cat-toggle="' + escapeHtml(cat) + '"'
+      + ' aria-expanded="' + (col ? 'false' : 'true') + '">'
+      + '<span class="exp-group-t">' + (EXP_CAT_EMOJI[cat] || '📦') + ' ' + escapeHtml(cat) + '</span>'
+      + '<span class="exp-group-n">' + idxs.length + ' 笔 · ¥' + sum.toFixed(2) + '</span>'
+      + '<span class="exp-group-chev">⌄</span>'
+      + '</button>'
+      + '<div class="exp-items">' + idxs.map(i => expItemHTML(expenses[i], i)).join('') + '</div>'
+      + '</div>';
+  });
+  return html;
+}
+
+// 分类名归一：万一老数据里有不在 EXP_CATS 里的分类，统一并进「其他」，
+// 免得冒出一个没有配色样式的野生组名。
+function expCatKey(c) {
+  const s = String(c || '');
+  return EXP_CATS.indexOf(s) >= 0 ? s : '其他';
+}
+
+// 折叠状态存 localStorage（按站点命名空间），不写进 data.json：
+// 它是「看的人」的偏好，写进数据会两台设备互相顶掉，还白触发一次云端提交。
+function expCollapsedCats() {
+  try {
+    let k = 'trip_exp_collapsed';
+    const b = window.__tripBridge;
+    if (b && typeof b.key === 'function') k = b.key(k);
+    const raw = localStorage.getItem(k);
+    const o = raw ? JSON.parse(raw) : null;
+    return (o && typeof o === 'object') ? o : {};
+  } catch (_) { return {}; }
+}
+function saveExpCollapsed(o) {
+  try {
+    let k = 'trip_exp_collapsed';
+    const b = window.__tripBridge;
+    if (b && typeof b.key === 'function') k = b.key(k);
+    localStorage.setItem(k, JSON.stringify(o || {}));
+  } catch (_) {}
+}
+function toggleExpCat(k) {
+  const key = expCatKey(k);
+  const o = expCollapsedCats();
+  if (o[key]) delete o[key]; else o[key] = 1;
+  saveExpCollapsed(o);
+  renderExpenses();
 }
 
 function expItemHTML(e, idx) {
@@ -3404,6 +3473,17 @@ function closeExpModal() { $('#exp-mask').classList.remove('show'); editingExp =
 // 一张手机照片压到能用也有 100KB+，十几张就顶穿天花板；一旦顶穿，页面会直接读不到
 // 整份 data.json —— 表现跟「行程全没了」一模一样（用户已经为空白骨架慌过两次）。
 // 所以图片一律走独立文件：存数据仓的 shop/ 目录，data.json 里只留一个相对路径。
+//
+// 分类（2026-09-23 二期）：添加时可选类型，列表按类型分组、每组可折叠展开。
+const SHOP_CATS = [
+  { k: 'snack',    n: '零食',   e: '🍿' },
+  { k: 'daily',    n: '日用品', e: '🧴' },
+  { k: 'drink',    n: '饮料',   e: '🥤' },
+  { k: 'souvenir', n: '纪念品', e: '🎁' },
+];
+// k 是写进数据里的稳定值（别改，老记录靠它对上）；SHOP_UNCATED 收留没有 cat 的老数据
+const SHOP_UNCATED = 'other';
+const SHOP_CAT_FALLBACK = { k: SHOP_UNCATED, n: '未分类', e: '📦' };
 const SHOP_DIR = 'shop';              // 图片在数据仓里的目录
 const SHOP_MAX_SIDE = 1400;           // 长边上限（全屏放大够清楚，又不至于几百 KB）
 const SHOP_QUALITY = 0.82;            // JPEG 质量
@@ -3537,13 +3617,50 @@ async function shopCompress(file) {
   return { dataUrl: dataUrl, w: w, h: h, bytes: bytes };
 }
 
+// ----- 分类（2026-09-23 二期）-----
+function shopCatKey(k) {
+  const s = String(k || '');
+  for (let i = 0; i < SHOP_CATS.length; i++) if (SHOP_CATS[i].k === s) return s;
+  return SHOP_UNCATED;
+}
+function shopCatMeta(k) {
+  for (let i = 0; i < SHOP_CATS.length; i++) if (SHOP_CATS[i].k === k) return SHOP_CATS[i];
+  return SHOP_CAT_FALLBACK;
+}
+// 折叠状态存 localStorage（按站点命名空间），不写进 data.json：
+// 它是「看的人」的偏好，写进数据会两台设备互相顶掉，还白触发一次云端提交。
+function shopCollapsedCats() {
+  try {
+    let k = 'trip_shop_collapsed';
+    const b = window.__tripBridge;
+    if (b && typeof b.key === 'function') k = b.key(k);
+    const raw = localStorage.getItem(k);
+    const o = raw ? JSON.parse(raw) : null;
+    return (o && typeof o === 'object') ? o : {};
+  } catch (_) { return {}; }
+}
+function saveShopCollapsed(o) {
+  try {
+    let k = 'trip_shop_collapsed';
+    const b = window.__tripBridge;
+    if (b && typeof b.key === 'function') k = b.key(k);
+    localStorage.setItem(k, JSON.stringify(o || {}));
+  } catch (_) {}
+}
+function toggleShopCat(k) {
+  const key = shopCatKey(k);
+  const o = shopCollapsedCats();
+  if (o[key]) delete o[key]; else o[key] = 1;
+  saveShopCollapsed(o);
+  renderShopping();
+}
+
 // ----- 渲染 -----
 function shopItemHTML(s, idx) {
   const img = String(s.img || '');
   const xhs = xhsUrl(s.xhs);
   const done = !!s.done;
   const note = String(s.note || '').trim();
-  // 名字允许留空（用户 2026-09-24）：空着就空着，绝不拿「待购物品」这种占位名糊上来
   const label = escapeHtml(String(s.title || '').trim());
   // 缩略图：src 先留空，进视口时 shopLoadThumb() 才去云端取。
   // 🔴 data-shop-src 必须挂在 .shop-thumb（那个 64×64 的盒子）上，不能挂在 img 上：
@@ -3552,7 +3669,7 @@ function shopItemHTML(s, idx) {
   let thumb = '';
   if (img) {
     thumb = '<div class="shop-thumb" data-shop-img="' + idx + '" data-shop-src="' + escapeHtml(img) + '" title="点击放大">'
-      + '<img alt="购物清单图片" />'
+      + '<img alt="' + (label ? label + '的图' : '物品图') + '" />'
       + '<span class="shop-thumb-ph">🖼</span>'
       + '</div>';
   }
@@ -3583,11 +3700,37 @@ function renderShopping() {
     return;
   }
   const todo = alive.filter(s => !s.done).length;
-  // 下标必须是 state.shopping 里的原始位置（下面靠 data-shop 回查），所以不能先 filter 再 map
-  wrap.innerHTML = `<div class="shop-count">共 ${alive.length} 件 · 待买 ${todo} 件</div>`
-    + '<div class="shop-items">'
-    + list.map((s, i) => (s && typeof s === 'object' ? shopItemHTML(s, i) : '')).join('')
-    + '</div>';
+  // 按类型分桶：桶里存**原始下标**，不能先 filter 再 map ——
+  // 卡片上是 data-shop="原始下标"，点勾选/编辑都靠它回查 state.shopping，一错位就改到别人头上
+  const buckets = {};
+  list.forEach((s, i) => {
+    if (!s || typeof s !== 'object') return;
+    const k = shopCatKey(s.cat);
+    if (!buckets[k]) buckets[k] = [];
+    buckets[k].push(i);
+  });
+  const closed = shopCollapsedCats();
+  const order = SHOP_CATS.map(c => c.k).concat([SHOP_UNCATED]);
+  let html = '<div class="shop-count">共 ' + alive.length + ' 件 · 待买 ' + todo + ' 件</div>';
+  order.forEach(k => {
+    const idxs = buckets[k];
+    if (!idxs || !idxs.length) return;           // 这一类没东西就不占位置
+    const meta = shopCatMeta(k);
+    const left = idxs.filter(i => !list[i].done).length;
+    const col = !!closed[k];
+    html += '<div class="shop-group' + (col ? ' collapsed' : '') + '" data-cat="' + k + '">'
+      + '<button type="button" class="shop-group-head" data-shop-cat-toggle="' + k + '"'
+      + ' aria-expanded="' + (col ? 'false' : 'true') + '">'
+      + '<span class="shop-group-t">' + meta.e + ' ' + meta.n + '</span>'
+      + '<span class="shop-group-n">' + idxs.length + ' 件 · 待买 ' + left + '</span>'
+      + '<span class="shop-group-chev">⌄</span>'
+      + '</button>'
+      + '<div class="shop-items">'
+      + idxs.map(i => shopItemHTML(list[i], i)).join('')
+      + '</div>'
+      + '</div>';
+  });
+  wrap.innerHTML = html;
   observeShopThumbs();
 }
 // 缩略图懒加载：进视口才去云端取（清单长时不至于一开页面就打几十个请求）
@@ -3672,6 +3815,17 @@ function refreshSXhsGo() {
   if (!inp || !btn) return;
   btn.hidden = !xhsUrl(inp.value);
 }
+// 弹窗里的类型选择：四个胶囊，再点一次已选中的那个 = 取消（回到「未分类」）。
+// 不额外摆一个「不分类」按钮 —— 没打算分类的人不该多一个要点的东西。
+function renderSCats() {
+  const wrap = $('#s-cats');
+  if (!wrap) return;
+  const cur = (shopDraft && shopDraft.cat) || '';
+  wrap.innerHTML = SHOP_CATS.map(c =>
+    '<button type="button" class="shop-cat' + (cur === c.k ? ' on' : '') + '"'
+    + ' data-cat-pick="' + c.k + '" aria-pressed="' + (cur === c.k ? 'true' : 'false') + '">'
+    + c.e + ' ' + c.n + '</button>').join('');
+}
 function openShopModal(idx) {
   editingShop = (typeof idx === 'number' && idx >= 0) ? idx : -1;
   const s = editingShop >= 0 ? (state.shopping || [])[editingShop] : null;
@@ -3679,6 +3833,7 @@ function openShopModal(idx) {
     img: (s && s.img) || '',       // 进弹窗时已有的图（云端路径）
     imgData: '',                   // 新选的图（本地 dataURL，保存时才上传）
     imgRemoved: false,             // 用户点了移除
+    cat: (s && s.cat) || '',       // 选中的类型（'' = 未分类）
   };
   $('#shop-modal-title').textContent = s ? '编辑待购物品' : '添加待购物品';
   $('#s-title').value = (s && s.title) || '';
@@ -3686,6 +3841,7 @@ function openShopModal(idx) {
   $('#s-xhs').value = (s && s.xhs) || '';
   $('#s-del').hidden = !s;
   refreshSXhsGo();
+  renderSCats();
   renderSImgPreview();
   paintSImgState('');
   // 老物品的图可能还没被懒加载过：进弹窗时补一次，否则预览是空的
@@ -3706,12 +3862,20 @@ function closeShopModal() {
   shopDraft = null;
 }
 async function saveShop() {
-  // 名字可以留空（用户 2026-09-24）—— 空着就空着，列表里也不显示占位名
+  // 物品名是选填：留空照样能存，卡片上就不显示名称那一行（不做「待购物品」兜底）。
+  // 但整条一个字段都没填 → 存出来是条纯空记录，没意义，只拦这一种。
   const title = $('#s-title').value.trim();
+  const note = $('#s-note').value.trim();
   const rawXhs = $('#s-xhs').value;
   const xhs = xhsUrl(rawXhs);
   if (String(rawXhs || '').trim() && !xhs) {
     toast('这段文字里没找到网址，请粘小红书「分享 → 复制链接」的完整内容');
+    return;
+  }
+  const hasImg = !!(shopDraft && (shopDraft.imgData || (shopDraft.img && !shopDraft.imgRemoved)));
+  const hasCat = shopCatKey((shopDraft && shopDraft.cat) || '') !== SHOP_UNCATED;
+  if (!title && !note && !xhs && !hasImg && !hasCat) {
+    toast('还没填任何内容，写点什么或选张图再保存');
     return;
   }
 
@@ -3741,12 +3905,14 @@ async function saveShop() {
   const old = (editingShop >= 0) ? (state.shopping || [])[editingShop] : null;
   const rec = {
     id: (old && old.id) || uid('sh'),
-    title: title,
-    note: $('#s-note').value.trim(),
+    note: note,
     done: !!(old && old.done),
   };
+  if (title) rec.title = title;   // 选填：留空就不落这个字段，卡片上也就没有名称那一行
   if (xhs) rec.xhs = xhs;
   if (imgRel) rec.img = imgRel;
+  const cat = shopCatKey((shopDraft && shopDraft.cat) || '');
+  if (cat !== SHOP_UNCATED) rec.cat = cat;   // 未分类不落字段（老记录本来就没有 cat）
 
   if (!Array.isArray(state.shopping)) state.shopping = [];
   if (editingShop >= 0) state.shopping[editingShop] = rec;
@@ -3778,6 +3944,9 @@ function bindShopEvents() {
   const list = $('#shopList');
   if (list) {
     list.addEventListener('click', (e) => {
+      // 组名：折叠 / 展开这一类。必须排在最前 —— 否则会落到下面的「整行」分支去打开编辑弹窗
+      const gh = e.target.closest('[data-shop-cat-toggle]');
+      if (gh) { e.stopPropagation(); toggleShopCat(gh.dataset.shopCatToggle); return; }
       // 三个热点各自 stopPropagation，免得点图片变成「打开编辑弹窗」
       const xb = e.target.closest('[data-shop-xhs]');
       if (xb) {
@@ -3810,6 +3979,17 @@ function bindShopEvents() {
   if (delBtn) delBtn.addEventListener('click', deleteShop);
   const saveBtn = $('#s-save');
   if (saveBtn) saveBtn.addEventListener('click', saveShop);
+
+  const catWrap = $('#s-cats');
+  if (catWrap) {
+    catWrap.addEventListener('click', (e) => {
+      const cp = e.target.closest('[data-cat-pick]');
+      if (!cp || !shopDraft) return;
+      const k = cp.dataset.catPick;
+      shopDraft.cat = (shopDraft.cat === k) ? '' : k;   // 再点一次已选中的 = 取消
+      renderSCats();
+    });
+  }
 
   const file = $('#s-file');
   const pick = $('#s-img-add');
@@ -3961,6 +4141,9 @@ function bindEvents() {
   });
 
   $('#expDays').addEventListener('click', (e) => {
+    // 组头先判：它整行是按钮，落在 .exp-item 之外，但顺序反了就会先撞到下面的 data-act 分支
+    const gh = e.target.closest('[data-exp-cat-toggle]');
+    if (gh) { toggleExpCat(gh.dataset.expCatToggle); return; }
     const el = e.target.closest('[data-act]');
     if (!el || el.dataset.act !== 'edit-exp') return;
     openExpModal(parseInt(el.dataset.idx, 10));
