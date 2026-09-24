@@ -743,6 +743,24 @@ input,textarea,select,[contenteditable="true"]{
 .exp-empty{font-size:13.5px;color:var(--ink3);padding:18px 6px;text-align:center}
 
 .exp-list{display:flex;flex-direction:column;gap:8px}
+
+/* 类型分组（2026-09-24 第十六轮）：组名整行可点，折叠时只收起这一组
+   （折叠状态存 localStorage，不进 data.json）。与购物清单的 .shop-group 同一套观感。 */
+.exp-group{margin-bottom:16px}
+.exp-group:last-child{margin-bottom:0}
+.exp-group-head{
+  width:100%;display:flex;align-items:center;gap:8px;
+  background:none;border:0;padding:6px 2px 10px;margin:0;
+  font-family:inherit;color:inherit;text-align:left;cursor:pointer;
+  -webkit-tap-highlight-color:transparent;
+}
+.exp-group-t{font-size:13.5px;font-weight:700;color:var(--ink);letter-spacing:.02em}
+.exp-group-n{margin-left:auto;font-size:12px;color:var(--ink3);letter-spacing:.02em}
+.exp-group-chev{flex:none;color:var(--ink3);font-size:15px;line-height:1;transition:transform .18s}
+.exp-group.collapsed .exp-group-chev{transform:rotate(-90deg)}
+.exp-group.collapsed .exp-items{display:none}
+.exp-items{display:flex;flex-direction:column;gap:8px}
+
 .exp-item{
   display:flex;align-items:center;gap:12px;background:var(--card);
   border:1px solid var(--line);border-radius:12px;padding:12px 14px;cursor:pointer;transition:.15s;
@@ -893,8 +911,34 @@ input,textarea,select,[contenteditable="true"]{
 /* ---------- 购物清单（2026-09-23）----------
    页面最下方：待购物品清单，每件可配一张图（点图全屏放大）+ 一条小红书推荐帖（点 📕 开 App）。
    图片不放在 data.json 里（那份文件有 1MB 读取上限，撑爆就整份读不回来），
-   实际存在数据仓的 shop/ 目录，这里只负责展示。 */
+   实际存在数据仓的 shop/ 目录，这里只负责展示。
+   2026-09-23 二期：条目可带类型，列表按类型分组，点组名折叠/展开该组。 */
 .shop-count{font-size:12.5px;color:var(--ink3);margin-bottom:10px;letter-spacing:.02em}
+
+/* 类型分组：组名整行可点，折叠时只收起这一组（折叠状态存 localStorage，不进 data.json） */
+.shop-group{margin-bottom:16px}
+.shop-group:last-child{margin-bottom:0}
+.shop-group-head{
+  width:100%;display:flex;align-items:center;gap:8px;
+  background:none;border:0;padding:6px 2px 10px;margin:0;
+  font-family:inherit;color:inherit;text-align:left;cursor:pointer;
+  -webkit-tap-highlight-color:transparent;
+}
+.shop-group-t{font-size:13.5px;font-weight:700;color:var(--ink);letter-spacing:.02em}
+.shop-group-n{margin-left:auto;font-size:12px;color:var(--ink3);letter-spacing:.02em}
+.shop-group-chev{flex:none;color:var(--ink3);font-size:15px;line-height:1;transition:transform .18s}
+.shop-group.collapsed .shop-group-chev{transform:rotate(-90deg)}
+.shop-group.collapsed .shop-items{display:none}
+
+/* 弹窗里的类型选择：四枚胶囊，再点一次已选中的那个 = 取消（回到未分类） */
+.shop-cats{display:flex;flex-wrap:wrap;gap:8px}
+.shop-cat{
+  border:1px solid var(--line);background:#fff;border-radius:999px;
+  padding:7px 14px;font-size:13.5px;color:var(--ink2);font-family:inherit;
+  cursor:pointer;line-height:1.5;min-height:38px;-webkit-tap-highlight-color:transparent;
+}
+.shop-cat:hover{border-color:var(--forest2);color:var(--forest)}
+.shop-cat.on{background:var(--forest);border-color:var(--forest);color:#fff}
 .shop-items{display:flex;flex-direction:column;gap:10px}
 .shop-empty{font-size:13.5px;color:var(--ink3);padding:18px 6px;text-align:center;line-height:1.9}
 
