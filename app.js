@@ -2602,13 +2602,31 @@ function renderPanelList(listing, opt) {
 const PIN_SVG = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21s7-6.2 7-11a7 7 0 1 0-14 0c0 4.8 7 11 7 11z"/><circle cx="12" cy="10" r="2.4"/></svg>';
 const PEN_SVG = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>';
 
+// 同名多店（连锁 / 同名小吃）时把区名带到地址前 —— 光看门牌号分不清是哪一家，
+// 「岩村路7-9号」和「三中路159-6号」都在柳州，得靠「鱼峰区 / 柳北区」才分得出来。
+function addrLineOf(p, nameCount) {
+  const addr = String(p.address || '');
+  if ((nameCount.get(String(p.name || '').trim()) || 0) < 2) return addr;
+  const raw = String(p.district || '');
+  // 高德的区字段有时是「广西壮族自治区柳州市柳北区」，按行政区切段后只留最末一段
+  const parts = raw.match(/[^省市区县旗]+?(?:省|市|区|县|旗)/g) || [];
+  const d = (parts.length ? parts[parts.length - 1] : raw).trim();
+  if (!d || addr.indexOf(d) >= 0) return addr;
+  return d + ' · ' + (addr || '地址不详');
+}
+
 function listHTML(listing) {
+  const nameCount = new Map();
+  listing.forEach(p => {
+    const n = String(p.name || '').trim();
+    nameCount.set(n, (nameCount.get(n) || 0) + 1);
+  });
   return listing.map((p, i) => `
     <button type="button" class="pp-item${p.manual ? ' manual' : ''}" data-pi="${i}">
       <span class="pp-item-ico">${p.manual ? PEN_SVG : PIN_SVG}</span>
       <span class="pp-item-main">
         <span class="pp-item-name">${escapeHtml(p.name)}</span>
-        <span class="pp-item-addr">${escapeHtml(p.address || '')}</span>
+        <span class="pp-item-addr">${escapeHtml(addrLineOf(p, nameCount))}</span>
       </span>
       <span class="pp-item-go">＋</span>
     </button>`).join('');
@@ -2668,27 +2686,54 @@ async function searchPlace(kw) {
 
 // 合并「本地命中 + 网络结果 + 名称兜底项」后统一渲染
 function commitPlaceResults(netResults, kw, warnMsg) {
-  const byName = new Map();   // 按名称去重：本地词典在前，优先保留
+  // 去重键 = 名称 + 坐标（2026-10-17 修）：原先只按名称去重，同名不同店会被合并成一条。
+  // 例：柳州「罗忆螺蛳粉」柳北区三中路 / 鱼峰区岩村路各一家，高德 App 显示 2 条，这里只剩 1 条。
+  // 坐标按 3 位小数（≈100 米）取整：同一家店的不同接口结果合并，隔几百米的分店各自保留。
+  // 唯一例外：本地词典项（常用地点）和网络项同名且坐标不同 → 让网络项原地顶替本地项，
+  // 不然「常用地点」会和真店并列两条，看着像重复。
+  const byKey = new Map();    // 名称+坐标 -> 已收录项
+  const byName = new Map();   // 名称 -> 已收录项（只用于上面那个顶替判断）
+  const seenNames = new Set();// 出现过的名称（给末尾兜底项判断用）
   const merged = [];
+  const coordOf = (p) => (typeof p.lng === 'number' && typeof p.lat === 'number')
+    ? '@' + p.lng.toFixed(3) + ',' + p.lat.toFixed(3) : '';
   for (const p of netResults) {
     if (!p || !p.name) continue;
-    const key = p.name.trim();
-    if (byName.has(key)) {
-      // 已有同名项：补齐缺失信息（坐标、详细地址），信息更全的那条会显示得更完整
-      const old = byName.get(key);
-      if (typeof p.lng === 'number' && typeof old.lng !== 'number') {
-        old.lng = p.lng; old.lat = p.lat;
+    const name = p.name.trim();
+    seenNames.add(name);
+    const key = name + coordOf(p);
+    const hit = byKey.get(key);
+    if (hit) {
+      // 同一条：补齐缺失信息（坐标、详细地址），信息更全的那条会显示得更完整
+      if (typeof p.lng === 'number' && typeof hit.lng !== 'number') {
+        hit.lng = p.lng; hit.lat = p.lat;
       }
       // 本地词典项只标了「常用地点」，若网络结果有更详细的地址则替换掉
-      if (old.local && p.address && !/^常用地点/.test(p.address)) old.address = p.address;
+      if (hit.local && p.address && !/^常用地点/.test(p.address)) hit.address = p.address;
+      // 已经有真实坐标和地址了，就不再算「内置坐标」——
+      // 否则后面再来一家同名分店时会被判成「顶替本地项」，把这一家顶掉
+      if (hit.local && !p.local) delete hit.local;
       continue;
     }
-    byName.set(key, p);
+    const same = byName.get(name);
+    if (p.local) {
+      // 同名项已经在前面了（本地或网络），不再重复加一条
+      if (same) continue;
+    } else if (same && same.local) {
+      // 网络结果顶替本地词典项：位置不变，信息和坐标换成真实的
+      Object.assign(same, p);
+      delete same.local;
+      byKey.set(key, same);
+      byName.set(name, same);
+      continue;
+    }
+    byKey.set(key, p);
+    byName.set(name, p);
     merged.push(p);
     if (merged.length >= 12) break;
   }
   // 末尾附一条「就用这个名字」兜底：已有同名结果时不需要（否则会出现重复项）
-  if (!byName.has(kw.trim())) {
+  if (!seenNames.has(kw.trim())) {
     merged.push({ name: kw, address: '按名称定位，不查坐标', manual: true });
   }
   placeResults = merged;
