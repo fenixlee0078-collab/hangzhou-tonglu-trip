@@ -755,12 +755,17 @@ var ROUTE_MODES = {
       return { ok: false, reason: why ? 'amap' : 'network', error: why };
     }
 
-    var out = [], byName = {};
+    var out = [], byKey = {};
+    // 去重键 = 名称 + 坐标（2026-10-17 修）：只按名称去重会把「同名不同店」合并成一条，
+    // 同名的连锁店 / 同名小吃在不同区各有一家时，另一家会被悄悄吃掉。
+    // 坐标按 3 位小数（≈100 米）取整：pois 与 tips 返回的同一家店能合并，隔几百米的分店各自保留。
     function push(name, address, district, loc) {
       name = String(name || '').trim();
       var ll = splitLoc(loc);                  // 没坐标的条目没法导航，直接丢
-      if (!name || byName[name] || !ll) return;
-      byName[name] = 1;
+      if (!name || !ll) return;
+      var k = name + '@' + ll[0].toFixed(3) + ',' + ll[1].toFixed(3);
+      if (byKey[k]) return;
+      byKey[k] = 1;
       out.push({ name: name, address: address, district: district, lng: ll[0], lat: ll[1] });
     }
     if (pois && !ePoi) {                        // 关键词搜索更完整，排前面
