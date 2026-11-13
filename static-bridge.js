@@ -572,6 +572,40 @@ var ROUTE_MODES = {
     return pack(pp.duration, pp.distance);
   }
 
+  // 骑行没有路线数据时的兜底：取步行路线，按 14 km/h 折算分钟数。
+  // ⚠ 带 est:true —— 前端会标「估算」，绗不能让估算冒充查到的数据。
+  async function bikeEstimateByGoogle(from, to) {
+    var key = gkey();
+    if (!key) return null;
+    var r;
+    try {
+      r = await REAL_FETCH('https://routes.googleapis.com/directions/v2:computeRoutes', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Goog-Api-Key': key,
+          'X-Goog-FieldMask': 'routes.duration,routes.distanceMeters'
+        },
+        body: JSON.stringify({
+          origin: { location: { latLng: { latitude: from.lat, longitude: from.lng } } },
+          destination: { location: { latLng: { latitude: to.lat, longitude: to.lng } } },
+          travelMode: 'WALK',
+          languageCode: 'zh-CN'
+        })
+      });
+    } catch (e) { return null; }
+    var j = null;
+    try { j = await r.json(); } catch (e) {}
+    var route = j && j.routes && j.routes[0];
+    var meters = Math.round(Number(route && route.distanceMeters) || 0);
+    if (!(meters > 0)) return null;
+    return {
+      ok: true,
+      minutes: Math.max(1, Math.round(meters / 1000 / 14 * 60)),
+      meters: meters, source: 'google-est', est: true
+    };
+  }
+
   async function routeByGoogle(mode, from, to) {
     var key = gkey();
     if (!key) return { ok: false, reason: 'nokey' };
@@ -610,9 +644,15 @@ var ROUTE_MODES = {
     var blocked = GOOGLE_OFF_RE.test(msg);
     if (blocked) return { ok: false, reason: 'google-off', error: msg.slice(0, 140) };
     // 谷歌回 200 但 `routes` 为空（响应就是一个 `{}`）＝ 这个地区没有该方式的路线数据。
-    // 实测：曼谷点「骑行」不管远近都回 `{}`（谷歌在泰国没有骑行路线覆盖）；
-    // 旧代码会兜到 `'谷歌返回 HTTP ' + status` ＝「没查到：谷歌返回 HTTP 200」，用户看不懂。
-    if (j && !j.error) return { ok: false, reason: 'noroute', mode: mode };
+    // 实测：曼谷、金边点「骑行」不管远近都回 `{}`（当地没有骑行路线覆盖）；
+    // 骑行有兜底：拿步行路线按 14 km/h 折算，标 est 让前端写明「估算」。
+    if (j && !j.error) {
+      if (mode === 'bike') {
+        var est = await bikeEstimateByGoogle(from, to);
+        if (est) return est;
+      }
+      return { ok: false, reason: 'noroute', mode: mode };
+    }
     return { ok: false, reason: 'google', error: msg.slice(0, 140) };
   }
 
