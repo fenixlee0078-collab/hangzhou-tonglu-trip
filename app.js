@@ -1057,8 +1057,7 @@ function resolvePlace(name) {
 //   选了之后自动查地图上的耗时，方便规划行程预留时间；海外默认谷歌、国内默认高德」
 //
 // 数据：item.leg = { mode, minutes, meters, src, at, from }
-//   · mode 必填（walk / transit / drive / bike；**海外行程没有 bike** —— 谷歌在泰国这类
-//     地方回 200 + `{}`（没有骑行路线数据），给了按钮只会让用户白点一次），其余都是查到的快照
+//   · mode 必填（walk / transit / drive / bike），其余都是查到的快照（骑行在海外可能是折算的估算值，见下面）
 //   · 查不到（没网 / Key 没开通）就只留 mode，列表上不显示耗时 —— 绝不显示「约 0 分钟」
 //   · 快照跟着 item 存进 data.json，不做本机缓存：一趟行程的段数有限，而「这段路当时
 //     要多久」本就该跟着行程走、跨设备可见（汇率那套本机缓存是另一回事）
@@ -1077,27 +1076,26 @@ function resolvePlace(name) {
 //
 // 查耗时走 /api/route（静态版由 static-bridge.js 顶替、本地版由 server.js 顶替）——
 // Key 一直留在桥/后端里，前端只拿得到「配没配」两个布尔值，这条路不破。
-// 🔴 海外行程**没有骑行**（用户 2026-09-20 要求）：谷歌在泰国这类地方根本没有骑行路线数据，
-//   查它只会回 200 + `{}` → 用户看到的是一句「谷歌这里没有「骑行」的路线数据」，白点一次。
-//   所以给 bike 打上 overseas:false，由下面的 legModes() 从按钮列表里摘掉。
-//   ⚠ 常量里**必须留着 bike**：国内高德走 v4/direction/bicycling（见 transport-test ⑤ ⑥
-//   那两条「前端 key 与桥/server 的 ROUTE_MODES 完全对齐」的断言），删了国内就没骑行了。
+// 🔴 海外**也给「骑行」**（2026-11-13 用户要求；2026-09-20 曾按「谷歌没覆盖」摘掉过）：
+//   谷歌在泰国/柬埔寨这类地方常常没有 BICYCLE 路线（实测金边回 200 + `{}`），
+//   所以桥/server 在查不到时会拿**步行路线按 14 km/h 折算**一个估算值
+//   （src='google-est'、est=true），界面上标明「估算」—— 否则按钮点下去只有一句「没有路线数据」，等于白给。
+//   国内照旧走高德 v4/direction/bicycling（真数据，不用折算）。
 const LEG_MODES = [
   { key: 'walk',    ico: '🚶', name: '步行', am: 'walk', gm: 'walking' },
   { key: 'transit', ico: '🚇', name: '公交', am: 'bus',  gm: 'transit' },
   { key: 'drive',   ico: '🚗', name: '驾车', am: 'car',  gm: 'driving' },
-  { key: 'bike',    ico: '🚴', name: '骑行', am: 'ride', gm: 'bicycling', overseas: false }
+  { key: 'bike',    ico: '🚴', name: '骑行', am: 'ride', gm: 'bicycling' }
 ];
 function legMeta(key) { return LEG_MODES.find(m => m.key === key) || null; }
-// 本行程能选的交通方式（海外去掉骑行）—— 渲染按钮就用它，别直接遍历 LEG_MODES
-function legModes() { return isOverseas() ? LEG_MODES.filter(m => m.overseas !== false) : LEG_MODES; }
+// 本行程能选的交通方式（2026-11-13 起国内海外都是四种；保留这个函数是为了「出口只有一处」）
+function legModes() { return LEG_MODES; }
 // 这个方式在本行程里到底能不能用：**所有出口都走这一个判断**，漏一处就会自相矛盾 ——
 // 比如「按钮已经没了，列表里还挂着一行『🚴 约 20 分钟』」。走它的地方：
 //   渲染按钮 / 未选提示（renderLegField）、列表小字（legLineHTML）、
 //   地图（openLegMap）、查询（refreshLeg）、点选（setLegMode）、保存清理（saveItem）
 function legModeUsable(key) {
-  const m = legMeta(key);
-  return !!m && !(isOverseas() && m.overseas === false);
+  return !!legMeta(key);
 }
 let legBusy = false;      // 正在查（渲染用）
 let legErr = '';          // 上一次查失败的原因（渲染用，不落盘）
@@ -1307,8 +1305,8 @@ function legErrText(r) {
     return isOverseas() ? '连不上谷歌（要能访问谷歌的网络），可以点「地图」自己看' : '网络不通，没查到；可以点「地图」自己看';
   }
   if (why === 'google-off') return '这把谷歌 Key 没开通 Routes API —— 去谷歌云给 Key 勾上这个接口即可（详见技能文档），或先点「地图」看';
-  // 谷歌回 200 但没给路线（实测：曼谷点「骑行」不管远近都这样，泰国没有骑行覆盖；
-  // 2026-09-20 起海外行程干脆不再提供「骑行」按钮，但这条分支仍要留 —— 国内也会查不到）——
+  // 谷歌回 200 但没给路线（实测：曼谷、金边点「骑行」都这样，当地没有骑行覆盖；
+  // 骑行已经由后端按步行路程折算兜底，这条分支留给步行/公交之类真查不到的情况）——
   // 这条不能混进「没查到」：用户会以为网络坏了、或者以为功能没做好，其实该换个方式
   if (why === 'noroute') {
     const n = (LEG_MODES.find((m) => m.key === String((r && r.mode) || '')) || {}).name || '这个方式';
@@ -1331,8 +1329,8 @@ function renderLegField() {
   const { day, idx } = editingItem;
   const item = (day >= 0 && idx >= 0 && state.days[day]) ? state.days[day].items[idx] : null;
   const rawMode = (item && item.leg && item.leg.mode) || '';
-  // 海外旧数据里可能存着「骑行」：这里当它没选（按钮已经不提供，没法反选了），
-  // 让用户重选一个即可覆盖；数据本身先留着，等保存时由 saveItem 清掉
+  // 认不出的方式（旧数据 / 手改过的）当它没选，让用户重选一个覆盖；
+  // 数据本身先留着，等保存时由 saveItem 清掉
   const mode = legModeUsable(rawMode) ? rawMode : '';
   box.innerHTML = legModes().map(m =>
     `<button type="button" class="leg-mode${m.key === mode ? ' on' : ''}" data-leg-mode="${m.key}">${m.ico} ${escapeHtml(m.name)}</button>`
@@ -1380,7 +1378,7 @@ function renderLegField() {
 
   if (!mode) {
     rows.push(rawMode
-      ? `<div class="leg-hint err">「${escapeHtml((legMeta(rawMode) || {}).name || rawMode)}」在海外没有路线数据，换个方式吧</div>`
+      ? `<div class="leg-hint err">「${escapeHtml((legMeta(rawMode) || {}).name || rawMode)}」这个交通方式认不出，重选一个吧</div>`
       : '<div class="leg-hint">选一个交通方式，我来查要多久</div>');
   } else if (from && to) {
     if (legBusy) {
@@ -1395,13 +1393,18 @@ function renderLegField() {
         + ` value="${has ? leg.minutes : ''}" placeholder="—" />`
         + '<span class="leg-unit">分钟</span>'
         + (leg.meters ? `<span class="leg-dst">${legDistText(leg.meters)}</span>` : '')
-        + (has ? `<span class="leg-src">${leg.src === 'manual' ? '手填' : (leg.src === 'google' ? '谷歌' : '高德')}</span>` : '')
+        + (has ? `<span class="leg-src">${leg.src === 'manual' ? '手填'
+          : (leg.src === 'google' ? '谷歌' : (leg.src === 'google-est' ? '估算' : '高德'))}</span>` : '')
         + '<button type="button" class="leg-refresh" id="btn-leg-refresh" title="重新查一次">↻</button>'
         + '<button type="button" class="leg-map" id="btn-leg-map" title="在地图里看这条路线">地图</button>'
         + '</div>');
       // 起点变过 → 这份耗时是上一段的，别让它冒充这一段
       if (leg.from && leg.from !== from.name) {
         rows.push(`<div class="leg-hint err">起点已经是「${escapeHtml(from.name)}」了，这个耗时是旧的，点 ↻ 重查</div>`);
+      }
+      // 估算值（海外骑行没路线时的兜底）必须自己说明白，别让它看起来像查到的
+      if (leg.est) {
+        rows.push('<div class="leg-hint">谷歌这里没有骑行路线，这是按步行路程 ÷ 14 km/h 估的；知道实际时间就手改上面的分钟数</div>');
       }
       if (legErr) rows.push('<div class="leg-hint err">' + escapeHtml(legErr) + '</div>');
       else if (!has) rows.push('<div class="leg-hint">还没查到，点 ↻ 试一次</div>');
@@ -1415,7 +1418,7 @@ function setLegMode(key) {
   const { day, idx } = editingItem;
   if (day < 0 || idx < 0) return;
   const item = state.days[day].items[idx];
-  if (!item || !legModeUsable(key)) return;   // 海外点不到「骑行」，但守卫还是要有
+  if (!item || !legModeUsable(key)) return;   // 守卫：认不出的方式不进来
   legErr = '';
   if (item.leg && item.leg.mode === key) {
     delete item.leg;                 // 再点一次 = 取消
@@ -1458,7 +1461,7 @@ async function refreshLeg() {
   if (r && r.ok) {
     cur.leg = {
       mode: meta.key, minutes: r.minutes, meters: r.meters,
-      src: r.source || 'amap', from: from.name, at: Date.now()
+      src: r.source || 'amap', est: !!r.est, from: from.name, at: Date.now()
     };
     legErr = '';
   } else {
@@ -1490,11 +1493,7 @@ function openLegMap() {
   const { day, idx } = editingItem;
   const item = (day >= 0 && idx >= 0 && state.days[day]) ? state.days[day].items[idx] : null;
   const meta = legMeta(item && item.leg && item.leg.mode);
-  if (!meta) return;
-  if (!legModeUsable(meta.key)) {
-    toast('「' + meta.name + '」在海外没有路线数据，换个方式再看地图');
-    return;
-  }
+  if (!meta || !legModeUsable(meta.key)) return;
   const from = legOriginSpot(day, idx);
   const to = legTargetCoord();
   if (!from || !to) { toast('起点或终点还没定位，算不了路线'); return; }
@@ -1515,7 +1514,7 @@ function legLineHTML(item) {
   const meta = legMeta(leg.mode);
   if (!meta || !legModeUsable(leg.mode)) return '';
   if (!(typeof leg.minutes === 'number' && leg.minutes > 0)) return '';
-  return `<div class="leg"><span class="leg-ico">${meta.ico}</span>约 ${leg.minutes} 分钟</div>`;
+  return `<div class="leg"><span class="leg-ico">${meta.ico}</span>约 ${leg.minutes} 分钟${leg.est ? '（估算）' : ''}</div>`;
 }
 
 function bindLegEvents() {
